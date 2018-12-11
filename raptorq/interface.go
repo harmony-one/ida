@@ -1,26 +1,27 @@
 package raptorq
 
 import (
-	//	libraptorq "github.com/harmony-one/go-raptorq/pkg/raptorq"
 	"context"
-	libraptorq "ida/libfakeraptorq"
+	libraptorq "github.com/harmony-one/go-raptorq/pkg/raptorq"
+	//libraptorq "ida/libfakeraptorq"
 	"net"
+	"sync"
 	"time"
 )
 
 const (
-	CommonOTI            byte          = 0
-	SchemeSpecificOTI    byte          = 1
+	Meta                 byte          = 1
 	EncodedSymbol        byte          = 2
 	Received             byte          = 3
 	SenderKey            byte          = 4
 	PubKeySize           int           = 20
-	Tau                  float32       = 0.4 // threshold rate of number of neighors decode message successfully
-	HashSize             int           = 32  // sha256 hash size
-	StopBroadCastTime    time.Duration = 7   // unit is second
-	CacheClearInterval   time.Duration = 5   // clear cache every xx seconds
-	EnforceClearInterval int64         = 30  // clear old cache eventually
+	Tau                  float32       = 0.8 // threshold rate of number of neighors decode message successfully
+	HashSize             int           = 20  // sha1 hash size
+	StopBroadCastTime    time.Duration = 150 // unit is second
+	CacheClearInterval   time.Duration = 250 // clear cache every xx seconds
+	EnforceClearInterval int64         = 300 // clear old cache eventually
 	UDPCacheSize         int           = 4 * 1024 * 1024
+	MaxBlockSize         int           = 88 * 1024 // 75kb
 )
 
 type Peer struct {
@@ -28,6 +29,7 @@ type Peer struct {
 	TCPPort string
 	UDPPort string
 	PubKey  string
+	Sid     int
 }
 
 type HashKey [HashSize]byte
@@ -40,19 +42,22 @@ type Node struct {
 	SenderCache        map[HashKey]bool
 	Cache              map[HashKey]*RaptorQImpl
 	PeerDecodedCounter map[HashKey]int
+	mux                sync.Mutex
 }
 
 type RaptorQImpl struct {
 	SenderPubKey string
 	RootHash     []byte
+	NumBlocks    int
+	MaxBlockSize int
 	Threshold    int
-	CommonOTI    uint64
-	SpecificOTI  uint32
-	Encoder      *libraptorq.FakeEncoder
-	Decoder      *libraptorq.FakeDecoder
-	//Encoder         libraptorq.Encoder
-	//Decoder         libraptorq.Decoder
-	ReceivedSymbols map[uint32]bool
+	CommonOTI    map[int]uint64
+	SpecificOTI  map[int]uint32
+	//Encoder      *libraptorq.FakeEncoder
+	//Decoder      *libraptorq.FakeDecoder
+	Encoder         map[int]libraptorq.Encoder
+	Decoder         map[int]libraptorq.Decoder
+	ReceivedSymbols map[int]map[uint32]bool
 	Ready           bool
 	InitTime        int64 //instance initiate time
 	SuccessTime     int64 //success decode time, UnixNano time

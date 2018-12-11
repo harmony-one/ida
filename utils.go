@@ -18,6 +18,7 @@ const PubKeySize int = 20
 
 // Entry is a single config of a node.
 type Entry struct {
+	Sid     string
 	IP      string
 	TCPPort string
 	UDPPort string
@@ -41,7 +42,11 @@ func (config *Config) GetPeerInfo() (ida.Peer, []ida.Peer, []ida.Peer) {
 	var peerList []ida.Peer
 	var selfPeer ida.Peer
 	for _, entry := range config.config {
-		peer := ida.Peer{Ip: entry.IP, TCPPort: entry.TCPPort, UDPPort: entry.UDPPort, PubKey: entry.PubKey}
+		sid, err := strconv.Atoi(entry.Sid)
+		if err != nil {
+			log.Printf("cannot convert sid")
+		}
+		peer := ida.Peer{Ip: entry.IP, TCPPort: entry.TCPPort, UDPPort: entry.UDPPort, PubKey: entry.PubKey, Sid: sid}
 		if entry.Role == "0" {
 			selfPeer = peer
 		} else if entry.Role == "1" {
@@ -67,7 +72,7 @@ func (config *Config) ReadConfigFile(filename string) error {
 	result := []Entry{}
 	for fscanner.Scan() {
 		p := strings.Split(fscanner.Text(), " ")
-		entry := Entry{p[0], p[1], p[2], p[3], p[4]}
+		entry := Entry{p[0], p[1], p[2], p[3], p[4], p[5]}
 		result = append(result, entry)
 	}
 	config.config = result
@@ -123,9 +128,10 @@ func InitConfig(n int) (map[int][]byte, []int, []int) {
 	pubkeys := make(map[int][]byte)
 
 	for i := 0; i < n; i++ {
+		sid := strconv.Itoa(i)
 		ts := strconv.Itoa(tcpport)
 		us := strconv.Itoa(udpport)
-		line := "127.0.0.1 " + ts + " " + us + " "
+		line := sid + " 127.0.0.1 " + ts + " " + us + " "
 		buf := make([]byte, PubKeySize)
 		rand.Read(buf)
 		pubkey := hex.EncodeToString(buf)
@@ -156,7 +162,8 @@ func WriteGraphRelationToConfig(p []string, n int, pubkeys map[int][]byte, tcps 
 	}
 	ts := strconv.Itoa(tcps[idx])
 	us := strconv.Itoa(udps[idx])
-	line := "127.0.0.1 " + ts + " " + us + " " + hex.EncodeToString(pubkeys[idx]) + " 0\n"
+	sid := strconv.Itoa(idx)
+	line := sid + " 127.0.0.1 " + ts + " " + us + " " + hex.EncodeToString(pubkeys[idx]) + " 0\n"
 	io.WriteString(f, line)
 	for _, v := range p[1:] {
 		idx, err = strconv.Atoi(v)
@@ -165,7 +172,8 @@ func WriteGraphRelationToConfig(p []string, n int, pubkeys map[int][]byte, tcps 
 		}
 		ts := strconv.Itoa(tcps[idx])
 		us := strconv.Itoa(udps[idx])
-		line := "127.0.0.1 " + ts + " " + us + " " + hex.EncodeToString(pubkeys[idx]) + " 1\n"
+		sid := strconv.Itoa(idx)
+		line := sid + " 127.0.0.1 " + ts + " " + us + " " + hex.EncodeToString(pubkeys[idx]) + " 1\n"
 		io.WriteString(f, line)
 	}
 }

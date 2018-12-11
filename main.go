@@ -57,7 +57,6 @@ func main() {
 		if ctx != nil {
 			node.StopBroadCast(ctx, cancel, hashkey)
 		}
-
 	} else {
 		node.ListeningOnBroadCast(pc)
 	}
