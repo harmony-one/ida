@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/hex"
 	"fmt"
-	ida "ida/raptorq"
 	"io"
 	"log"
 	"math/rand"
@@ -12,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	ida "github.com/harmony-one/ida/raptorq"
 )
 
 const PubKeySize int = 20

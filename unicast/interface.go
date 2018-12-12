@@ -1,6 +1,6 @@
 package unicast
 
-import raptorq "ida/raptorq"
+import raptorq "github.com/harmony-one/ida/raptorq"
 
 type Node struct {
 	UniCast
