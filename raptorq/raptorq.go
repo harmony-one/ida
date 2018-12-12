@@ -370,77 +370,75 @@ func (node *Node) HandleMetaData(conn net.Conn) {
 	var hash []byte
 	defer conn.Close()
 	c := bufio.NewReader(conn)
-	for {
-		buf := make([]byte, HashSize)
-		n, err := io.ReadFull(c, buf)
-		if err != nil { // why this happens
-			log.Printf("metadata received %v size message", n)
-			log.Printf("metadata unable to get root hash of the message: %v", err)
+	buf := make([]byte, HashSize)
+	n, err := io.ReadFull(c, buf)
+	if err != nil { // why this happens
+		log.Printf("metadata received %v size message", n)
+		log.Printf("metadata unable to get root hash of the message: %v", err)
+		return
+	}
+	raptorq := node.InitRaptorQIfNotExist(buf)
+	hash = raptorq.RootHash // repeated here
+	mtype, _ := c.ReadByte()
+	switch mtype {
+	case Meta:
+		enoughBytes := make([]byte, PubKeySize)
+		var n int
+		n, err = io.ReadFull(c, enoughBytes)
+		if err != nil {
+			log.Printf("pubkey read error")
 			return
 		}
-		raptorq := node.InitRaptorQIfNotExist(buf)
-		hash = raptorq.RootHash // repeated here
-		mtype, _ := c.ReadByte()
-		switch mtype {
-		case Meta:
-			enoughBytes := make([]byte, PubKeySize)
-			var n int
-			n, err = io.ReadFull(c, enoughBytes)
+		raptorq.SenderPubKey = hex.EncodeToString(enoughBytes[:n])
+
+		Z := make([]byte, 4)
+		_, err := io.ReadFull(c, Z)
+		if err != nil {
+			log.Printf("number of blocks decoding error")
+		}
+		raptorq.NumBlocks = int(binary.BigEndian.Uint32(Z))
+
+		for i := 0; i < raptorq.NumBlocks; i++ {
+
+			eightBytes := make([]byte, 8)
+			_, err := io.ReadFull(c, eightBytes)
 			if err != nil {
-				log.Printf("pubkey read error")
+				log.Printf("common oti read error")
 				return
 			}
-			raptorq.SenderPubKey = hex.EncodeToString(enoughBytes[:n])
+			raptorq.CommonOTI[i] = binary.BigEndian.Uint64(eightBytes)
 
-			Z := make([]byte, 4)
-			_, err := io.ReadFull(c, Z)
+			fourBytes := make([]byte, 4)
+			_, err = io.ReadFull(c, fourBytes)
 			if err != nil {
-				log.Printf("number of blocks decoding error")
+				log.Printf("schemespecific oti read error")
+				return
 			}
-			raptorq.NumBlocks = int(binary.BigEndian.Uint32(Z))
-
-			for i := 0; i < raptorq.NumBlocks; i++ {
-
-				eightBytes := make([]byte, 8)
-				_, err := io.ReadFull(c, eightBytes)
-				if err != nil {
-					log.Printf("common oti read error")
-					return
-				}
-				raptorq.CommonOTI[i] = binary.BigEndian.Uint64(eightBytes)
-
-				fourBytes := make([]byte, 4)
-				_, err = io.ReadFull(c, fourBytes)
-				if err != nil {
-					log.Printf("schemespecific oti read error")
-					return
-				}
-				raptorq.SpecificOTI[i] = binary.BigEndian.Uint32(fourBytes)
-			}
-			err = raptorq.SetDecoder()
-			if err != nil {
-				log.Printf("unable to set decoders for raptorq")
-			}
-			raptorq.Ready = true
-			hashkey := ConvertToFixedSize(hash)
-			node.Cache[hashkey] = raptorq
-			log.Printf("metadata received, raptorq ready")
-		case Received:
-			hashkey := ConvertToFixedSize(hash)
-			node.mux.Lock()
-			node.PeerDecodedCounter[hashkey] = node.PeerDecodedCounter[hashkey] + 1
-			node.mux.Unlock()
-			sid, err := c.ReadByte()
-			if err != nil {
-				log.Printf("node sid read error")
-			}
-			log.Printf("decoded confirmation received from %v", int(sid))
-			//TODO: add received timestamp for latency estimate
-			return
-		default:
-			log.Printf("unknown meta data type")
-
+			raptorq.SpecificOTI[i] = binary.BigEndian.Uint32(fourBytes)
 		}
+		err = raptorq.SetDecoder()
+		if err != nil {
+			log.Printf("unable to set decoders for raptorq")
+		}
+		raptorq.Ready = true
+		hashkey := ConvertToFixedSize(hash)
+		node.Cache[hashkey] = raptorq
+		log.Printf("metadata received, raptorq ready")
+	case Received:
+		hashkey := ConvertToFixedSize(hash)
+		node.mux.Lock()
+		node.PeerDecodedCounter[hashkey] = node.PeerDecodedCounter[hashkey] + 1
+		node.mux.Unlock()
+		sid, err := c.ReadByte()
+		if err != nil {
+			log.Printf("node sid read error")
+		}
+		log.Printf("decoded confirmation received from %v", int(sid))
+		//TODO: add received timestamp for latency estimate
+		return
+	default:
+		log.Printf("unknown meta data type")
+
 	}
 }
 

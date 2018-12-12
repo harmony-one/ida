@@ -10,3 +10,7 @@ IDA Gossip Protocol finished. The go-raptorq binding to libraptorq has issue. Cu
 ./startserver.sh <node_id>
 3. to broadcast a message
 ./startserver.sh <node_id> <message_file>
+
+
+12/11/2018
+add unicast mode support

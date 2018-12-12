@@ -1,2 +1,4 @@
 received
 configs
+*.pdf
+.DS_Store
