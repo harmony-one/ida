@@ -2,10 +2,11 @@ package main
 
 import (
 	"flag"
-	ida "ida/raptorq"
 	"io/ioutil"
 	"log"
 	"net"
+
+	ida "github.com/harmony-one/ida/raptorq"
 )
 
 func InitNode(confignbr string, configallpeer string) *ida.Node {
