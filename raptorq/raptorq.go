@@ -6,10 +6,8 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"encoding/hex"
-
 	raptorfactory "github.com/harmony-one/go-raptorq/pkg/defaults"
 	libraptorq "github.com/harmony-one/go-raptorq/pkg/raptorq"
-	//	raptorfactory "github.com/harmony-one/ida/libfakeraptorq"
 	"io"
 	"io/ioutil"
 	"log"
@@ -43,7 +41,7 @@ func (node *Node) ListeningOnBroadCast(pc net.PacketConn) {
 
 }
 
-func (node *Node) BroadCast(msg []byte, pc net.PacketConn) (context.Context, context.CancelFunc, *RaptorQImpl) {
+func (node *Node) BroadCast(msg []byte, pc net.PacketConn) (map[int]interface{}, *RaptorQImpl) {
 	raptorq := RaptorQImpl{}
 	raptorq.Threshold = int(Tau * float32(len(node.AllPeers)))
 	log.Printf("threshold value is %v", raptorq.Threshold)
@@ -56,7 +54,7 @@ func (node *Node) BroadCast(msg []byte, pc net.PacketConn) (context.Context, con
 	log.Printf("encoder created")
 	if err != nil {
 		log.Printf("cannot create raptorq encoder")
-		return nil, nil, nil
+		return nil, nil
 	}
 
 	hashkey := ConvertToFixedSize(raptorq.RootHash)
@@ -77,20 +75,33 @@ func (node *Node) BroadCast(msg []byte, pc net.PacketConn) (context.Context, con
 		go SendMetaData(&raptorq, conn, msg)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go node.BroadCastEncodedSymbol(ctx, &raptorq, pc, msg)
-	return ctx, cancel, &raptorq
+	cancels := make(map[int]interface{})
+	for z := 0; z < raptorq.NumBlocks; z++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancels[z] = cancel
+		go node.BroadCastEncodedSymbol(ctx, &raptorq, pc, msg, z)
+	}
+	return cancels, &raptorq
 }
 
-func (node *Node) StopBroadCast(ctx context.Context, cancel context.CancelFunc, raptorq *RaptorQImpl) {
-	defer cancel()
+func (node *Node) StopBroadCast(cancels map[int]interface{}, raptorq *RaptorQImpl) {
 	hashkey := ConvertToFixedSize(raptorq.RootHash)
+	canceled := make(map[int]bool)
 	for start := time.Now(); time.Since(start) < StopBroadCastTime*time.Second; {
-		if node.PeerDecodedCounter[hashkey] >= raptorq.Threshold {
-			log.Printf("broadcast finished with time elapse = %v ms", float64(time.Now().UnixNano()-raptorq.InitTime)/1000000)
+		for z := 0; z < raptorq.NumBlocks; z++ {
+			if canceled[z] {
+				continue
+			}
+			if node.PeerDecodedCounter[hashkey][z] >= raptorq.Threshold {
+				log.Printf("block %v broadcast finished with time elapse = %v ms", z, float64(time.Now().UnixNano()-raptorq.InitTime)/1000000)
+				cancels[z].(context.CancelFunc)()
+				canceled[z] = true
+			}
+		}
+		if len(canceled) >= raptorq.NumBlocks {
 			return
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 	}
 }
 
@@ -172,9 +183,9 @@ func (raptorq *RaptorQImpl) SetEncoder(msg []byte) error {
 	// Al: symbol alignment parameter
 	var Al uint8 = 4
 	// T: symbol size, can take it to be maximum payload size, multiple of Al
-	var T uint16 = 512
+	var T uint16 = 1024
 	// WS: working memory, maxSubBlockSize, assume it to be 8KB
-	var WS uint32 = 8 * 1024
+	var WS uint32 = 16 * 1024
 	// minimum sub-symbol size is SS, must be a multiple of Al
 	var minSubSymbolSize uint16 = 1
 
@@ -236,40 +247,44 @@ func SendMetaData(raptorq *RaptorQImpl, conn net.Conn, msg []byte) {
 	log.Printf("metadata send to %v", conn.RemoteAddr())
 }
 
-func (node *Node) BroadCastEncodedSymbol(ctx context.Context, raptorq *RaptorQImpl, pc net.PacketConn, msg []byte) {
+func (node *Node) BroadCastEncodedSymbol(ctx context.Context, raptorq *RaptorQImpl, pc net.PacketConn, msg []byte, z int) {
+	log.Printf("broadcastencoded symbol with context %v", ctx)
 	var esi uint32
 	peerList := node.PeerList
 	L := len(peerList)
+	var n int
 	for {
 		select {
 		case <-ctx.Done():
+			log.Printf("block %v broadcast stopped", z)
 			return
 		default:
-			for z := 0; z < raptorq.NumBlocks; z++ {
-				// for prototype, use fixed time duration after K symbols sent
-				if esi > uint32(raptorq.Encoder[z].MinSymbols(0)) {
-					time.Sleep(10 * time.Millisecond)
-				} else {
-					time.Sleep(5 * time.Millisecond)
-				}
-				symbol, err := raptorq.ConstructSymbolPack(z, esi)
-				if err != nil {
-					log.Printf("raptorq encoding error: %s", err)
-					return //chao: return or continue
-				}
-				idx := int(esi) % L
-				remoteAddr := net.JoinHostPort(peerList[idx].Ip, peerList[idx].UDPPort)
-				addr, err := net.ResolveUDPAddr("udp", remoteAddr)
-				if err != nil {
-					log.Printf("cannot resolve udp address %v", remoteAddr)
-				}
-				pc.WriteTo(symbol, addr)
-				if esi%100 == 0 {
-					log.Printf("block %v symbol %v sent to %v", z, esi, remoteAddr)
-				}
+			// for prototype, use fixed time duration after K symbols sent
+			if esi > uint32(raptorq.Encoder[z].MinSymbols(0)) {
+				time.Sleep(1000 * time.Millisecond)
+			} else {
+				time.Sleep(7 * time.Millisecond)
 			}
-			esi++
+			symbol, err := raptorq.ConstructSymbolPack(z, esi)
+			if err != nil {
+				log.Printf("raptorq encoding error: %s", err)
+				return //chao: return or continue
+			}
+			idx := int(esi) % L
+			remoteAddr := net.JoinHostPort(peerList[idx].Ip, peerList[idx].UDPPort)
+			addr, err := net.ResolveUDPAddr("udp", remoteAddr)
+			if err != nil {
+				log.Printf("cannot resolve udp address %v", remoteAddr)
+			}
+			n, err = pc.WriteTo(symbol, addr)
+			if err != nil {
+				log.Printf("broadcast encoded symbol written error %v with %v symbol written", err, n)
+			}
+			if esi%100 == 0 {
+				log.Printf("block %v symbol %v sent to %v", z, esi, remoteAddr)
+			}
 		}
+		esi++
 	}
 }
 
@@ -282,7 +297,10 @@ func (node *Node) RelayEncodedSymbol(pc net.PacketConn, symbol []byte) {
 		}
 		//	esi := binary.BigEndian.Uint32(symbol[HashSize+1 : HashSize+5])
 		//log.Printf("relay symbol %v to %v", esi, addr)
-		pc.WriteTo(symbol, addr)
+		n, err := pc.WriteTo(symbol, addr)
+		if err != nil {
+			log.Printf("relay symbol failed at %v with %v bytes written", addr, n)
+		}
 	}
 }
 
@@ -317,21 +335,24 @@ func (node *Node) Gossip(pc net.PacketConn) {
 		}
 		raptorq.ReceivedSymbols[z][esi] = true
 		if len(raptorq.ReceivedSymbols[z])%100 == 0 {
-			log.Printf("source block %v received %v symbols", z, len(raptorq.ReceivedSymbols[z]))
+			log.Printf("node %v received source block %v , %v symbols", node.SelfPeer.Sid, z, len(raptorq.ReceivedSymbols[z]))
 		}
-		go node.RelayEncodedSymbol(pc, buffer[:n])
 		if raptorq.SuccessTime > 0 {
 			continue
 		}
 		if raptorq.Ready {
 			raptorq.Decoder[z].Decode(0, esi, symbol)
 		}
-		if raptorq.IsSourceObjectReady() {
-			log.Printf("source object is ready for hashkey %v", hash)
+		go node.RelayEncodedSymbol(pc, buffer[:n])
+		if raptorq.Decoder[z].IsSourceObjectReady() {
+			log.Printf("source object is ready for block %v", z)
 			raptorq.SuccessTime = time.Now().UnixNano()
-			go node.ResponseSuccess(hash, raptorq.SuccessTime)
+			go node.ResponseSuccess(hash, z, raptorq.SuccessTime)
+		} else {
+			continue
+		}
+		if raptorq.IsSourceObjectReady() {
 			go WriteReceivedMessage(raptorq)
-
 		}
 	}
 }
@@ -427,14 +448,20 @@ func (node *Node) HandleMetaData(conn net.Conn) {
 		log.Printf("metadata received, raptorq ready")
 	case Received:
 		hashkey := ConvertToFixedSize(hash)
+		Z := make([]byte, 4)
+		_, err := io.ReadFull(c, Z)
+		z := int(binary.BigEndian.Uint32(Z))
 		node.mux.Lock()
-		node.PeerDecodedCounter[hashkey] = node.PeerDecodedCounter[hashkey] + 1
+		if _, ok := node.PeerDecodedCounter[hashkey]; !ok {
+			node.PeerDecodedCounter[hashkey] = make(map[int]int)
+		}
+		node.PeerDecodedCounter[hashkey][z] = node.PeerDecodedCounter[hashkey][z] + 1
 		node.mux.Unlock()
 		sid, err := c.ReadByte()
 		if err != nil {
 			log.Printf("node sid read error")
 		}
-		log.Printf("decoded confirmation received from %v", int(sid))
+		log.Printf("block %v decoded confirmation received from %v", z, int(sid))
 		//TODO: add received timestamp for latency estimate
 		return
 	default:
@@ -444,14 +471,17 @@ func (node *Node) HandleMetaData(conn net.Conn) {
 }
 
 // this is used for stop sender, will be replaced by consensus algorithm later
-func (node *Node) ResponseSuccess(hash []byte, timestamp int64) {
-	b := make([]byte, 8)
-	binary.BigEndian.PutUint64(b, uint64(timestamp))
+func (node *Node) ResponseSuccess(hash []byte, z int, timestamp int64) {
 	copyhash := make([]byte, len(hash))
 	copy(copyhash, hash)
 	okmsg := append(copyhash, Received)
+	Z := make([]byte, 4)
+	binary.BigEndian.PutUint32(Z, uint32(z))
+	okmsg = append(okmsg, Z...)
 	okmsg = append(okmsg, byte(node.SelfPeer.Sid))
-	okmsg = append(okmsg, b...)
+	//	b := make([]byte, 8)
+	//	binary.BigEndian.PutUint64(b, uint64(timestamp))
+	//	okmsg = append(okmsg, b...)
 	hashkey := ConvertToFixedSize(hash)
 	senderPubKey := node.Cache[hashkey].SenderPubKey
 	for _, peer := range node.AllPeers {
@@ -464,7 +494,7 @@ func (node *Node) ResponseSuccess(hash []byte, timestamp int64) {
 			log.Printf("dial to tcp addr %v failed with %v", tcpaddr, err)
 		}
 		_, err = conn.Write(okmsg)
-		log.Printf("node %v send okay message to sender %v", node.SelfPeer.Sid, tcpaddr)
+		log.Printf("node %v send okay message for block %v to sender %v", node.SelfPeer.Sid, z, tcpaddr)
 		if err != nil {
 			log.Printf("send received message to sender %v failed with %v", tcpaddr, err)
 		}

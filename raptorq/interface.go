@@ -2,9 +2,7 @@ package raptorq
 
 import (
 	"context"
-
 	libraptorq "github.com/harmony-one/go-raptorq/pkg/raptorq"
-	//libraptorq "github.com/harmony-one/ida/libfakeraptorq"
 	"net"
 	"sync"
 	"time"
@@ -16,11 +14,11 @@ const (
 	Received             byte          = 3
 	SenderKey            byte          = 4
 	PubKeySize           int           = 20
-	Tau                  float32       = 0.8 // threshold rate of number of neighors decode message successfully
-	HashSize             int           = 20  // sha1 hash size
-	StopBroadCastTime    time.Duration = 150 // unit is second
-	CacheClearInterval   time.Duration = 250 // clear cache every xx seconds
-	EnforceClearInterval int64         = 300 // clear old cache eventually
+	Tau                  float32       = 0.8  // threshold rate of number of neighors decode message successfully
+	HashSize             int           = 20   // sha1 hash size
+	StopBroadCastTime    time.Duration = 1500 // unit is second
+	CacheClearInterval   time.Duration = 2500 // clear cache every xx seconds
+	EnforceClearInterval int64         = 3000 // clear old cache eventually
 	UDPCacheSize         int           = 4 * 1024 * 1024
 	MaxBlockSize         int           = 88 * 1024 // 75kb
 )
@@ -36,13 +34,13 @@ type Peer struct {
 type HashKey [HashSize]byte
 
 type Node struct {
-	GossipIDA
+	//	GossipIDA
 	SelfPeer           Peer
 	PeerList           []Peer
 	AllPeers           []Peer
 	SenderCache        map[HashKey]bool
 	Cache              map[HashKey]*RaptorQImpl
-	PeerDecodedCounter map[HashKey]int
+	PeerDecodedCounter map[HashKey]map[int]int
 	mux                sync.Mutex
 }
 
