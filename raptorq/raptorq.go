@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math"
 	"net"
 	"strconv"
 	"time"
@@ -247,12 +248,24 @@ func SendMetaData(raptorq *RaptorQImpl, conn net.Conn, msg []byte) {
 	log.Printf("metadata send to %v", conn.RemoteAddr())
 }
 
+func ExpBackoffDelay(t0 float64, base float64) func(int, int) time.Duration {
+	// t0 is in milliseconds
+	return func(k int, k0 int) time.Duration {
+		delta := float64(k - k0)
+		power := math.Max(delta, 0)
+		power = math.Min(power, 10)
+		return time.Duration(1000000 * t0 * math.Pow(base, power))
+	}
+}
+
 func (node *Node) BroadCastEncodedSymbol(ctx context.Context, raptorq *RaptorQImpl, pc net.PacketConn, msg []byte, z int) {
-	log.Printf("broadcastencoded symbol with context %v", ctx)
+	log.Printf("broadcast encoded symbol with context %v", ctx)
 	var esi uint32
 	peerList := node.PeerList
 	L := len(peerList)
 	var n int
+	backoff := ExpBackoffDelay(node.T0, node.Base)
+	k0 := int(raptorq.Encoder[z].MinSymbols(0))
 	for {
 		select {
 		case <-ctx.Done():
@@ -260,11 +273,10 @@ func (node *Node) BroadCastEncodedSymbol(ctx context.Context, raptorq *RaptorQIm
 			return
 		default:
 			// for prototype, use fixed time duration after K symbols sent
-			if esi > uint32(raptorq.Encoder[z].MinSymbols(0)) {
-				time.Sleep(1000 * time.Millisecond)
-			} else {
-				time.Sleep(7 * time.Millisecond)
-			}
+			k := int(esi)
+			log.Printf("sleeping %v before broadcast block %v esi %v", backoff(k, k0), z, esi)
+			time.Sleep(backoff(k, k0))
+
 			symbol, err := raptorq.ConstructSymbolPack(z, esi)
 			if err != nil {
 				log.Printf("raptorq encoding error: %s", err)
@@ -325,7 +337,7 @@ func (node *Node) Gossip(pc net.PacketConn) {
 		z := int(binary.BigEndian.Uint32(buffer[HashSize : HashSize+4]))
 		esi := binary.BigEndian.Uint32(buffer[HashSize+4 : HashSize+8])
 		symbol := buffer[HashSize+8 : n]
-		//log.Printf("symbol esi=%v, received from block %v", esi, z)
+		log.Printf("symbol esi=%v, received from block %v", esi, z)
 		// just relay once
 		if _, ok := raptorq.ReceivedSymbols[z][esi]; ok {
 			continue

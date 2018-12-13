@@ -7,9 +7,10 @@ import (
 	"io/ioutil"
 	"log"
 	"net"
+	"strconv"
 )
 
-func InitNode(confignbr string, configallpeer string) *ida.Node {
+func InitNode(confignbr string, configallpeer string, t0 float64, base float64) *ida.Node {
 	config1 := NewConfig()
 	config1.ReadConfigFile(confignbr)
 	selfPeer, peerList, _ := config1.GetPeerInfo()
@@ -19,7 +20,7 @@ func InitNode(confignbr string, configallpeer string) *ida.Node {
 	Cache := make(map[ida.HashKey]*ida.RaptorQImpl)
 	SenderCache := make(map[ida.HashKey]bool)
 	PeerDecodedCounter := make(map[ida.HashKey]map[int]int)
-	node := ida.Node{SelfPeer: selfPeer, PeerList: peerList, AllPeers: allPeers, Cache: Cache, PeerDecodedCounter: PeerDecodedCounter, SenderCache: SenderCache}
+	node := ida.Node{SelfPeer: selfPeer, PeerList: peerList, AllPeers: allPeers, Cache: Cache, PeerDecodedCounter: PeerDecodedCounter, SenderCache: SenderCache, T0: t0, Base: base}
 	return &node
 }
 
@@ -42,6 +43,8 @@ func main() {
 	configFile := flag.String("nbr_config", "configs/config_0.txt", "config file contains neighbor peers")
 	allPeerFile := flag.String("all_config", "configs/config_allpeers.txt", "config file contains all peer nodes info")
 	mode := flag.String("mode", "ida", "choose benchmark testing mode, [ida|unicast|p2p]")
+	t0 := flag.String("t0", "7", "initial delay time for symbol broadcasting")
+	base := flag.String("base", "1.8", "base of exponential increase of symbol broadcasting delay")
 	flag.Parse()
 
 	if *generateConfigFiles {
@@ -51,7 +54,17 @@ func main() {
 
 	switch *mode {
 	case "ida":
-		node := InitNode(*configFile, *allPeerFile)
+		var t, b float64
+		var err error
+		if t, err = strconv.ParseFloat(*t0, 64); err != nil {
+			log.Printf("unable to parse t0 %v with error %v", t0, err)
+			return
+		}
+		if b, err = strconv.ParseFloat(*base, 64); err != nil {
+			log.Printf("unable to parse base %v with error %v", base, err)
+			return
+		}
+		node := InitNode(*configFile, *allPeerFile, t, b)
 		uaddr := net.JoinHostPort(node.SelfPeer.Ip, node.SelfPeer.UDPPort)
 		pc, err := net.ListenPacket("udp", uaddr)
 		if err != nil {

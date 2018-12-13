@@ -41,6 +41,8 @@ type Node struct {
 	SenderCache        map[HashKey]bool
 	Cache              map[HashKey]*RaptorQImpl
 	PeerDecodedCounter map[HashKey]map[int]int
+	T0                 float64 // network delay parameter
+	Base               float64 // network delay parameter
 	mux                sync.Mutex
 }
 
