@@ -364,12 +364,12 @@ func (node *Node) Gossip(pc net.PacketConn) {
 		go node.RelayEncodedSymbol(pc, buffer[:n])
 		if raptorq.Decoder[z].IsSourceObjectReady() {
 			log.Printf("source object is ready for block %v", z)
-			raptorq.SuccessTime = time.Now().UnixNano()
-			go node.ResponseSuccess(hash, z, raptorq.SuccessTime)
+			go node.ResponseSuccess(hash, z)
 		} else {
 			continue
 		}
 		if raptorq.IsSourceObjectReady() {
+			raptorq.SuccessTime = time.Now().UnixNano()
 			go WriteReceivedMessage(raptorq)
 		}
 	}
@@ -489,7 +489,7 @@ func (node *Node) HandleMetaData(conn net.Conn) {
 }
 
 // this is used for stop sender, will be replaced by consensus algorithm later
-func (node *Node) ResponseSuccess(hash []byte, z int, timestamp int64) {
+func (node *Node) ResponseSuccess(hash []byte, z int) {
 	copyhash := make([]byte, len(hash))
 	copy(copyhash, hash)
 	okmsg := append(copyhash, Received)
