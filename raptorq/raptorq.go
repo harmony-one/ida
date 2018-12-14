@@ -12,6 +12,7 @@ import (
 	"io/ioutil"
 	"log"
 	"math"
+	"math/rand"
 	"net"
 	"strconv"
 	"sync"
@@ -89,7 +90,31 @@ func (node *Node) BroadCast(msg []byte, pc net.PacketConn) (map[int]interface{},
 	return cancels, &raptorq
 }
 
+func (node *Node) ReportUnfinishedBlocks(raptorq *RaptorQImpl, stop chan bool) {
+	hashkey := ConvertToFixedSize(raptorq.RootHash)
+	for {
+		select {
+		case <-stop:
+			log.Printf("stop received")
+			return
+		default:
+			time.Sleep(5 * time.Second)
+			counter := 0
+			for z := 0; z < raptorq.NumBlocks; z++ {
+				if node.PeerDecodedCounter[hashkey][z] < raptorq.Threshold {
+					counter++
+					log.Printf("block %v broadcast not finished", z)
+				}
+			}
+			log.Printf("total blocks: %v, unfinished blocks: %v", raptorq.NumBlocks, counter)
+		}
+	}
+}
+
 func (node *Node) StopBroadCast(cancels map[int]interface{}, raptorq *RaptorQImpl) {
+	stop := make(chan bool)
+	go node.ReportUnfinishedBlocks(raptorq, stop)
+
 	hashkey := ConvertToFixedSize(raptorq.RootHash)
 	canceled := make(map[int]bool)
 	for start := time.Now(); time.Since(start) < StopBroadCastTime*time.Second; {
@@ -104,6 +129,7 @@ func (node *Node) StopBroadCast(cancels map[int]interface{}, raptorq *RaptorQImp
 			}
 		}
 		if len(canceled) >= raptorq.NumBlocks {
+			stop <- true
 			return
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -263,7 +289,6 @@ func ExpBackoffDelay(t0 float64, t1 float64, base float64) func(int, int) time.D
 }
 
 func (node *Node) BroadCastEncodedSymbol(ctx context.Context, raptorq *RaptorQImpl, pc net.PacketConn, msg []byte, z int) {
-	log.Printf("broadcast encoded symbol with context %v", ctx)
 	var esi uint32
 	peerList := node.PeerList
 	L := len(peerList)
@@ -305,7 +330,11 @@ func (node *Node) BroadCastEncodedSymbol(ctx context.Context, raptorq *RaptorQIm
 }
 
 func (node *Node) RelayEncodedSymbol(pc net.PacketConn, symbol []byte) {
-	for _, peer := range node.PeerList {
+	L := len(node.PeerList)
+	idx0 := rand.Intn(L)
+	for i, _ := range node.PeerList {
+		idx := (i + idx0) % L
+		peer := node.PeerList[idx]
 		remoteAddr := net.JoinHostPort(peer.Ip, peer.UDPPort)
 		addr, err := net.ResolveUDPAddr("udp", remoteAddr)
 		if err != nil {
@@ -475,11 +504,12 @@ func (node *Node) HandleMetaData(conn net.Conn) {
 		}
 		node.PeerDecodedCounter[hashkey][z] = node.PeerDecodedCounter[hashkey][z] + 1
 		node.mux.Unlock()
-		sid, err := c.ReadByte()
+		sid := make([]byte, 4)
+		_, err = io.ReadFull(c, sid)
 		if err != nil {
 			log.Printf("node sid read error")
 		}
-		log.Printf("block %v decoded confirmation received from %v", z, int(sid))
+		log.Printf("block %v decoded confirmation received from %v", z, binary.BigEndian.Uint32(sid))
 		//TODO: add received timestamp for latency estimate
 		return
 	default:
@@ -496,7 +526,9 @@ func (node *Node) ResponseSuccess(hash []byte, z int) {
 	Z := make([]byte, 4)
 	binary.BigEndian.PutUint32(Z, uint32(z))
 	okmsg = append(okmsg, Z...)
-	okmsg = append(okmsg, byte(node.SelfPeer.Sid))
+	sid := make([]byte, 4)
+	binary.BigEndian.PutUint32(sid, uint32(node.SelfPeer.Sid))
+	okmsg = append(okmsg, sid...)
 	//	b := make([]byte, 8)
 	//	binary.BigEndian.PutUint64(b, uint64(timestamp))
 	//	okmsg = append(okmsg, b...)

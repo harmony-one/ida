@@ -68,7 +68,7 @@ type RaptorQImpl struct {
 
 // IDA broadcast using RaptorQ interface
 type GossipIDA interface {
-	BroadCast(msg []byte, pc net.PacketConn) (context.Context, context.CancelFunc, *RaptorQImpl)
-	StopBroadCast(ctx context.Context, cancel context.CancelFunc, raptorq *RaptorQImpl)
+	BroadCast(msg []byte, pc net.PacketConn) (context.CancelFunc, *RaptorQImpl)
+	StopBroadCast(cancel context.CancelFunc, raptorq *RaptorQImpl)
 	ListeningOnBroadCast(pc net.PacketConn)
 }

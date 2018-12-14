@@ -6,11 +6,14 @@ import (
 	uni "github.com/harmony-one/ida/unicast"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net"
 	"strconv"
+	"time"
 )
 
 func InitNode(confignbr string, configallpeer string, t0 float64, t1 float64, t2 float64, base float64) *ida.Node {
+	rand.Seed(time.Now().UTC().UnixNano())
 	config1 := NewConfig()
 	config1.ReadConfigFile(confignbr)
 	selfPeer, peerList, _ := config1.GetPeerInfo()
