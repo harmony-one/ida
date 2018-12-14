@@ -14,6 +14,7 @@ import (
 	"math"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -61,6 +62,7 @@ func (node *Node) BroadCast(msg []byte, pc net.PacketConn) (map[int]interface{},
 	hashkey := ConvertToFixedSize(raptorq.RootHash)
 	node.SenderCache[hashkey] = true
 
+	var wg sync.WaitGroup
 	for _, peer := range node.AllPeers {
 		// send metadata
 		if node.SelfPeer.PubKey == peer.PubKey {
@@ -73,8 +75,10 @@ func (node *Node) BroadCast(msg []byte, pc net.PacketConn) (map[int]interface{},
 			continue
 		}
 		log.Printf("connection established to peer %s", tcpaddr)
-		go SendMetaData(&raptorq, conn, msg)
+		wg.Add(1)
+		go SendMetaData(&raptorq, conn, msg, &wg)
 	}
+	wg.Wait()
 
 	cancels := make(map[int]interface{})
 	for z := 0; z < raptorq.NumBlocks; z++ {
@@ -235,7 +239,8 @@ func (raptorq *RaptorQImpl) SetDecoder() error {
 	return nil
 }
 
-func SendMetaData(raptorq *RaptorQImpl, conn net.Conn, msg []byte) {
+func SendMetaData(raptorq *RaptorQImpl, conn net.Conn, msg []byte, wg *sync.WaitGroup) {
+	defer wg.Done()
 	timeoutDuration := 2 * time.Second
 	conn.SetWriteDeadline(time.Now().Add(timeoutDuration))
 	defer conn.Close()
@@ -248,12 +253,13 @@ func SendMetaData(raptorq *RaptorQImpl, conn net.Conn, msg []byte) {
 	log.Printf("metadata send to %v", conn.RemoteAddr())
 }
 
-func ExpBackoffDelay(t0 float64, base float64) func(int, int) time.Duration {
-	// t0 is in milliseconds
+func ExpBackoffDelay(t0 float64, t1 float64, base float64) func(int, int) time.Duration {
+	// t0,t1 is in milliseconds
+	max_k := math.Log2(t1/t0) / math.Log2(base) //result cap by t1
 	return func(k int, k0 int) time.Duration {
 		delta := float64(k - k0)
 		power := math.Max(delta, 0)
-		power = math.Min(power, 10)
+		power = math.Min(power, max_k)
 		return time.Duration(1000000 * t0 * math.Pow(base, power))
 	}
 }
@@ -264,7 +270,7 @@ func (node *Node) BroadCastEncodedSymbol(ctx context.Context, raptorq *RaptorQIm
 	peerList := node.PeerList
 	L := len(peerList)
 	var n int
-	backoff := ExpBackoffDelay(node.T0, node.Base)
+	backoff := ExpBackoffDelay(node.T0, node.T1, node.Base)
 	k0 := int(raptorq.Encoder[z].MinSymbols(0))
 	for {
 		select {
