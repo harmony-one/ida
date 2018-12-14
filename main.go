@@ -65,7 +65,7 @@ func main() {
 			return
 		}
 		node := InitNode(*configFile, *allPeerFile, t, b)
-		uaddr := net.JoinHostPort(node.SelfPeer.Ip, node.SelfPeer.UDPPort)
+		uaddr := net.JoinHostPort("", node.SelfPeer.UDPPort)
 		pc, err := net.ListenPacket("udp", uaddr)
 		if err != nil {
 			log.Printf("cannot connect to udp port")

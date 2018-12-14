@@ -21,7 +21,7 @@ func (node *Node) ListeningOnBroadCast(pc net.PacketConn) {
 	go node.Gossip(pc)
 	go node.ClearCache()
 
-	addr := net.JoinHostPort("127.0.0.1", node.SelfPeer.TCPPort)
+	addr := net.JoinHostPort("", node.SelfPeer.TCPPort)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Printf("cannot listening to the port %s", node.SelfPeer.TCPPort)
