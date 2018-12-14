@@ -10,7 +10,7 @@ import (
 	"strconv"
 )
 
-func InitNode(confignbr string, configallpeer string, t0 float64, t1 float64, base float64) *ida.Node {
+func InitNode(confignbr string, configallpeer string, t0 float64, t1 float64, t2 float64, base float64) *ida.Node {
 	config1 := NewConfig()
 	config1.ReadConfigFile(confignbr)
 	selfPeer, peerList, _ := config1.GetPeerInfo()
@@ -20,7 +20,7 @@ func InitNode(confignbr string, configallpeer string, t0 float64, t1 float64, ba
 	Cache := make(map[ida.HashKey]*ida.RaptorQImpl)
 	SenderCache := make(map[ida.HashKey]bool)
 	PeerDecodedCounter := make(map[ida.HashKey]map[int]int)
-	node := ida.Node{SelfPeer: selfPeer, PeerList: peerList, AllPeers: allPeers, Cache: Cache, PeerDecodedCounter: PeerDecodedCounter, SenderCache: SenderCache, T0: t0, T1: t1, Base: base}
+	node := ida.Node{SelfPeer: selfPeer, PeerList: peerList, AllPeers: allPeers, Cache: Cache, PeerDecodedCounter: PeerDecodedCounter, SenderCache: SenderCache, T0: t0, T1: t1, Base: base, T2: t2}
 	return &node
 }
 
@@ -45,6 +45,7 @@ func main() {
 	mode := flag.String("mode", "ida", "choose benchmark testing mode, [ida|unicast|p2p]")
 	t0 := flag.String("t0", "7", "initial delay time for symbol broadcasting")
 	t1 := flag.String("t1", "70", "uppper bound delay time for symbol broadcasting")
+	t2 := flag.String("t2", "7", "delay time for symbol relay")
 	base := flag.String("base", "1.5", "base of exponential increase of symbol broadcasting delay")
 	flag.Parse()
 
@@ -55,21 +56,25 @@ func main() {
 
 	switch *mode {
 	case "ida":
-		var ta, tb, b float64
+		var ta, tb, tc, b float64
 		var err error
 		if ta, err = strconv.ParseFloat(*t0, 64); err != nil {
 			log.Printf("unable to parse t0 %v with error %v", t0, err)
 			return
 		}
 		if tb, err = strconv.ParseFloat(*t1, 64); err != nil {
-			log.Printf("unable to parse t0 %v with error %v", t0, err)
+			log.Printf("unable to parse t1 %v with error %v", t1, err)
+			return
+		}
+		if tc, err = strconv.ParseFloat(*t2, 64); err != nil {
+			log.Printf("unable to parse t2 %v with error %v", t2, err)
 			return
 		}
 		if b, err = strconv.ParseFloat(*base, 64); err != nil {
 			log.Printf("unable to parse base %v with error %v", base, err)
 			return
 		}
-		node := InitNode(*configFile, *allPeerFile, ta, tb, b)
+		node := InitNode(*configFile, *allPeerFile, ta, tb, tc, b)
 		uaddr := net.JoinHostPort("", node.SelfPeer.UDPPort)
 		pc, err := net.ListenPacket("udp", uaddr)
 		if err != nil {

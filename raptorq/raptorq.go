@@ -221,8 +221,6 @@ func (raptorq *RaptorQImpl) SetEncoder(msg []byte) error {
 	}
 	log.Printf("number of blocks = %v, K0=%v", raptorq.NumBlocks, raptorq.Encoder[0].MinSymbols(0))
 	log.Printf("encoder creation time is %v ms", (time.Now().UnixNano()-raptorq.InitTime)/1000000)
-	// TODO chao: remove it later after fix the slow creation of encoder
-	raptorq.InitTime = time.Now().UnixNano()
 	return nil
 }
 
@@ -280,7 +278,7 @@ func (node *Node) BroadCastEncodedSymbol(ctx context.Context, raptorq *RaptorQIm
 		default:
 			// for prototype, use fixed time duration after K symbols sent
 			k := int(esi)
-			log.Printf("sleeping %v before broadcast block %v esi %v", backoff(k, k0), z, esi)
+			//log.Printf("sleeping %v before broadcast block %v esi %v", backoff(k, k0), z, esi)
 			time.Sleep(backoff(k, k0))
 
 			symbol, err := raptorq.ConstructSymbolPack(z, esi)
@@ -315,6 +313,7 @@ func (node *Node) RelayEncodedSymbol(pc net.PacketConn, symbol []byte) {
 		}
 		//	esi := binary.BigEndian.Uint32(symbol[HashSize+1 : HashSize+5])
 		//log.Printf("relay symbol %v to %v", esi, addr)
+		time.Sleep(time.Duration(node.T2 * 1000000))
 		n, err := pc.WriteTo(symbol, addr)
 		if err != nil {
 			log.Printf("relay symbol failed at %v with %v bytes written", addr, n)

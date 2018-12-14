@@ -19,7 +19,7 @@ const (
 	StopBroadCastTime    time.Duration = 1500 // unit is second
 	CacheClearInterval   time.Duration = 2500 // clear cache every xx seconds
 	EnforceClearInterval int64         = 3000 // clear old cache eventually
-	UDPCacheSize         int           = 4 * 1024 * 1024
+	UDPCacheSize         int           = 40 * 1024 * 1024
 	MaxBlockSize         int           = 88 * 1024 // 75kb
 )
 
@@ -41,9 +41,10 @@ type Node struct {
 	SenderCache        map[HashKey]bool
 	Cache              map[HashKey]*RaptorQImpl
 	PeerDecodedCounter map[HashKey]map[int]int
-	T0                 float64 // network delay parameter
-	T1                 float64 // network delay parameter
-	Base               float64 // network delay parameter
+	T0                 float64 // sender delay parameter
+	T1                 float64 // sender delay parameter
+	T2                 float64 // relay delay parameter
+	Base               float64 // sender delay parameter
 	mux                sync.Mutex
 }
 
