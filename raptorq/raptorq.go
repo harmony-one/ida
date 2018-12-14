@@ -355,6 +355,7 @@ func (node *Node) Gossip(pc net.PacketConn) {
 			log.Printf("node %v received source block %v , %v symbols", node.SelfPeer.Sid, z, len(raptorq.ReceivedSymbols[z]))
 		}
 		if raptorq.SuccessTime > 0 {
+			go node.RelayEncodedSymbol(pc, buffer[:n])
 			continue
 		}
 		if raptorq.Ready {
