@@ -396,24 +396,18 @@ func (node *Node) Gossip(pc net.PacketConn) {
 			log.Printf("node %v received source block %v , %v symbols", node.SelfPeer.Sid, z, len(raptorq.ReceivedSymbols[z]))
 		}
 
-		if raptorq.SuccessTime > 0 {
-			go node.RelayEncodedSymbol(pc, copybuffer[:n])
-			continue
-		}
-		if raptorq.Ready {
+		if !raptorq.Decoder[z].IsSourceObjectReady() {
 			raptorq.Decoder[z].Decode(0, esi, symbol)
+			if raptorq.Decoder[z].IsSourceObjectReady() {
+				log.Printf("source object is ready for block %v", z)
+				go node.ResponseSuccess(hash, z)
+				if raptorq.IsSourceObjectReady() {
+					raptorq.SuccessTime = time.Now().UnixNano()
+					go WriteReceivedMessage(raptorq)
+				}
+			}
 		}
 		go node.RelayEncodedSymbol(pc, copybuffer[:n])
-		if raptorq.Decoder[z].IsSourceObjectReady() {
-			log.Printf("source object is ready for block %v", z)
-			go node.ResponseSuccess(hash, z)
-		} else {
-			continue
-		}
-		if raptorq.IsSourceObjectReady() {
-			raptorq.SuccessTime = time.Now().UnixNano()
-			go WriteReceivedMessage(raptorq)
-		}
 	}
 }
 
@@ -533,16 +527,15 @@ func (node *Node) HandleMetaData(conn net.Conn) {
 
 // this is used for stop sender, will be replaced by consensus algorithm later
 func (node *Node) ResponseSuccess(hash []byte, z int) {
-	okmsg := append(hash, Received)
+	okmsg := make([]byte, 0)
+	okmsg = append(okmsg, hash...)
+	okmsg = append(okmsg, Received)
 	Z := make([]byte, 4)
 	binary.BigEndian.PutUint32(Z, uint32(z))
 	okmsg = append(okmsg, Z...)
 	sid := make([]byte, 4)
 	binary.BigEndian.PutUint32(sid, uint32(node.SelfPeer.Sid))
 	okmsg = append(okmsg, sid...)
-	//	b := make([]byte, 8)
-	//	binary.BigEndian.PutUint64(b, uint64(timestamp))
-	//	okmsg = append(okmsg, b...)
 	hashkey := ConvertToFixedSize(hash)
 	senderPubKey := node.Cache[hashkey].SenderPubKey
 	for _, peer := range node.AllPeers {
@@ -560,7 +553,9 @@ func (node *Node) ResponseSuccess(hash []byte, z int) {
 				if err == nil {
 					break
 				}
+				log.Printf("dial to tcp addr %v failed with %v (retry %v)", tcpaddr, err, i)
 			}
+			log.Printf("retry exhausted")
 		}
 		if err == nil && conn != nil {
 			_, err = conn.Write(okmsg)
