@@ -383,7 +383,6 @@ func (node *Node) Gossip(pc net.PacketConn) {
 		z := int(binary.BigEndian.Uint32(copybuffer[HashSize+1 : HashSize+5]))
 		esi := binary.BigEndian.Uint32(copybuffer[HashSize+5 : HashSize+9])
 		symbol := copybuffer[HashSize+9 : n]
-		log.Printf("symbol esi=%v, received from block %v", esi, z)
 		// just relay once
 		if _, ok := raptorq.ReceivedSymbols[z][esi]; ok {
 			continue
@@ -391,6 +390,8 @@ func (node *Node) Gossip(pc net.PacketConn) {
 		if _, ok := raptorq.ReceivedSymbols[z]; !ok {
 			raptorq.ReceivedSymbols[z] = make(map[uint32]bool)
 		}
+
+		log.Printf("symbol esi=%v, received from block %v", esi, z)
 		raptorq.ReceivedSymbols[z][esi] = true
 		if len(raptorq.ReceivedSymbols[z])%100 == 0 {
 			log.Printf("node %v received source block %v , %v symbols", node.SelfPeer.Sid, z, len(raptorq.ReceivedSymbols[z]))
@@ -426,6 +427,7 @@ func (raptorq *RaptorQImpl) IsSourceObjectReady() bool {
 func (node *Node) InitRaptorQIfNotExist(hash []byte) *RaptorQImpl {
 	//hashkey := hex.EncodeToString(hash)
 	hashkey := ConvertToFixedSize(hash)
+	node.mux.Lock()
 	if node.Cache[hashkey] == nil {
 		log.Printf("raptorq initialized with hash %v", hashkey)
 		raptorq := RaptorQImpl{}
@@ -439,6 +441,7 @@ func (node *Node) InitRaptorQIfNotExist(hash []byte) *RaptorQImpl {
 		raptorq.InitTime = time.Now().UnixNano()
 		node.Cache[hashkey] = &raptorq
 	}
+	node.mux.Unlock()
 	return node.Cache[hashkey]
 }
 
