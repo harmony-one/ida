@@ -1,6 +1,7 @@
 received
 configs
 *.pdf
+*.png
 .DS_Store
 /ida
 

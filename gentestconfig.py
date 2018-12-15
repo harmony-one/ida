@@ -13,10 +13,10 @@ sq = shlex.quote
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_NAME_TAG = 'IDA Test Instance'
-#DEFAULT_NAME_TAG = 'IDA_test'
-DEFAULT_SSH_KEY = os.path.join(os.environ['HOME'], '.ssh', 'ida')
-#DEFAULT_SSH_KEY = os.path.join(os.environ['HOME'], '.ssh', 'ida.pem')
+#DEFAULT_NAME_TAG = 'IDA Test Instance'
+DEFAULT_NAME_TAG = 'IDA_test_1'
+#DEFAULT_SSH_KEY = os.path.join(os.environ['HOME'], '.ssh', 'ida')
+DEFAULT_SSH_KEY = os.path.join(os.environ['HOME'], '.ssh', 'ida.pem')
 DEFAULT_IDA_DIR = 'go/src/github.com/harmony-one/ida'
 
 
@@ -41,6 +41,8 @@ def _main():
                                  gen, start, stop, send, update""")
     parser.add_argument('--file', metavar='FILE',
                         help=f"""the file to send (for --action=send)""")
+    parser.add_argument('--id', metavar='NODE_ID_IN_REGION',type=int,
+                        help=f"""the node is in a given region to login""")
     parser.add_argument('num_instances', type=int, metavar='N',
                         help="""number of instances""")
     parser.add_argument('regions', nargs='+', metavar='REGION',
@@ -72,10 +74,12 @@ def _main():
                 if instance['State']['Name'] == 'running':
                     ips1.append(instance['PublicIpAddress'])
         ips1.sort(key=lambda ip: tuple(int(b) for b in ip.split('.')))
-        if len(ips1) != args.num_instances:
+        if len(ips1) < args.num_instances:
             raise RuntimeError(f"{region} has {len(ips1)} matching instances,"
-                               f" not {args.num_instances}")
+                               f"should be greater or equal than {args.num_instances}")
+        ips1 = ips1[:args.num_instances]
         ips[region] = ips1
+        print(f"in {region} will use {len(ips[region])} instances")
         all_ips.extend(ips1)
 
     ida_dir = sq(args.ida_dir)
@@ -92,6 +96,11 @@ def _main():
 
     for action in args.actions.split(','):
         action = action.strip()
+        if action == 'login':
+            logger.info(f"log into given remote host")
+            ip = ips[region][args.id]
+            subprocess.run(['ssh',f'-i{sq(args.ssh_key)}',
+                           f'{args.ssh_user}@{ip}'])
         if action == 'gen':
             logger.info(f"generating configurations")
 
@@ -100,17 +109,21 @@ def _main():
             for idx, ip in enumerate(all_ips):
                 pk = hashlib.sha1(ip.encode()).hexdigest()
                 print(f"{idx} {ip} 20000 10000 {pk} 2", file=all_peers_config)
-                with open(f'configs/{idx}.txt', 'w') as peer_config:
-                    print(f"{idx} {ip} 20000 10000 {pk} 0", file=peer_configs[idx])
-                    for idx2, ip2 in enumerate(all_ips):
-                        if idx2 == idx:
-                            continue
-                        pk2 = hashlib.sha1(ip2.encode()).hexdigest()
-                        print(f"{idx2} {ip2} 20000 10000 {pk2} 1",
-                              file=peer_configs[idx])
+                print(f"{idx} {ip} 20000 10000 {pk} 0", file=peer_configs[idx])
+                for idx2, ip2 in enumerate(all_ips):
+                    if idx2 == idx:
+                        continue
+                    pk2 = hashlib.sha1(ip2.encode()).hexdigest()
+                    print(f"{idx2} {ip2} 20000 10000 {pk2} 1",
+                          file=peer_configs[idx])
             all_peers_config = all_peers_config.getvalue().encode()
             for idx, peer_config in enumerate(peer_configs):
                 peer_configs[idx] = peer_config.getvalue().encode()
+
+            logger.info(f"removing old config files")
+            for idx, ip in enumerate(all_ips):
+                logger.info(f"... {ip}")
+                ssh(ip, f'rm -f {ida_dir}/configs/*')
 
             logger.info(f"copying all-peer configs")
             for idx, ip in enumerate(all_ips):
@@ -138,10 +151,10 @@ def _main():
                     check=True)
 
         elif action == 'stop':
-            logger.info(f"stopping server")
+            logger.info(f"stopping server, and remove received files")
             for idx, ip in enumerate(all_ips):
                 logger.info(f"... {ip}")
-                ssh(ip, f'killall ida')
+                ssh(ip, f'killall ida && rm -f {ida_dir}/received/*')
 
         elif action == 'send':
             if args.file is None:
