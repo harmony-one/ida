@@ -304,7 +304,6 @@ func (node *Node) BroadCastEncodedSymbol(ctx context.Context, raptorq *RaptorQIm
 		default:
 			// for prototype, use fixed time duration after K symbols sent
 			k := int(esi)
-			//log.Printf("sleeping %v before broadcast block %v esi %v", backoff(k, k0), z, esi)
 			time.Sleep(backoff(k, k0))
 
 			symbol, err := raptorq.ConstructSymbolPack(z, esi, node.Hop)
@@ -391,10 +390,9 @@ func (node *Node) Gossip(pc net.PacketConn) {
 			raptorq.ReceivedSymbols[z] = make(map[uint32]bool)
 		}
 
-		log.Printf("symbol esi=%v, received from block %v", esi, z)
 		raptorq.ReceivedSymbols[z][esi] = true
-		if len(raptorq.ReceivedSymbols[z])%100 == 0 {
-			log.Printf("node %v received source block %v , %v symbols", node.SelfPeer.Sid, z, len(raptorq.ReceivedSymbols[z]))
+		if len(raptorq.ReceivedSymbols[z])%50 == 0 {
+			log.Printf("node %v received source block %v , %v symbols, latest symbol esi = %v", node.SelfPeer.Sid, z, len(raptorq.ReceivedSymbols[z]), esi)
 		}
 
 		if !raptorq.Decoder[z].IsSourceObjectReady() {
@@ -576,6 +574,7 @@ func WriteReceivedMessage(raptorq *RaptorQImpl) {
 		log.Printf("source object is not ready")
 		return
 	}
+	log.Printf("writing decoded source file......")
 	var F int
 	for i := 0; i < raptorq.NumBlocks; i++ {
 		F += int(raptorq.Decoder[i].TransferLength())

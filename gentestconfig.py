@@ -43,6 +43,8 @@ def _main():
                         help=f"""the file to send (for --action=send)""")
     parser.add_argument('--id', metavar='NODE_ID_IN_REGION',type=int,
                         help=f"""the node is in a given region to login""")
+    parser.add_argument('--query', metavar='search query',
+                        help=f"""search given query from the nodes """)
     parser.add_argument('num_instances', type=int, metavar='N',
                         help="""number of instances""")
     parser.add_argument('regions', nargs='+', metavar='REGION',
@@ -178,6 +180,16 @@ def _main():
                 f'-base 1.01 '
                 f'2>&1 | tee ida.out',
                 check=True)
+        elif action == 'grep':
+            if args.query is None:
+                parser.error("--query not specified")
+            logger.info(f"searching for {args.query} from nodes")
+            for idx, ip in enumerate(all_ips):
+                query = sq(args.query)
+                logger.info(f"...{ip} searching {query}")
+                logger.info("**********************************************************"
+                ssh(ip,f'cd {ida_dir} && ls -l ida.out && '
+                        f'ag {query} ida.out | cat',check=True)
 
         elif action == 'update':
             logger.info(f"downloading new binary from s3")
