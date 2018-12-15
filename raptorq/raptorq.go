@@ -187,7 +187,7 @@ func (raptorq *RaptorQImpl) ConstructMetaData() []byte {
 	return packet
 }
 
-func (raptorq *RaptorQImpl) ConstructSymbolPack(z int, esi uint32) ([]byte, error) {
+func (raptorq *RaptorQImpl) ConstructSymbolPack(z int, esi uint32, hop int) ([]byte, error) {
 	T := raptorq.Encoder[z].SymbolSize()
 	symbol := make([]byte, int(T))
 	_, err := raptorq.Encoder[z].Encode(0, esi, symbol)
@@ -195,9 +195,10 @@ func (raptorq *RaptorQImpl) ConstructSymbolPack(z int, esi uint32) ([]byte, erro
 		return nil, err
 	}
 	//log.Printf("encoded esi=%+v symbol=%+v n=%+v err=%+v", esi, symbol, n, err)
+	packet := append(raptorq.RootHash, byte(hop))
 	Z := make([]byte, 4)
 	binary.BigEndian.PutUint32(Z, uint32(z))
-	packet := append(raptorq.RootHash, Z...)
+	packet = append(packet, Z...)
 	esiheader := make([]byte, 4)
 	binary.BigEndian.PutUint32(esiheader, esi)
 	packet = append(packet, esiheader...)
@@ -306,7 +307,7 @@ func (node *Node) BroadCastEncodedSymbol(ctx context.Context, raptorq *RaptorQIm
 			//log.Printf("sleeping %v before broadcast block %v esi %v", backoff(k, k0), z, esi)
 			time.Sleep(backoff(k, k0))
 
-			symbol, err := raptorq.ConstructSymbolPack(z, esi)
+			symbol, err := raptorq.ConstructSymbolPack(z, esi, node.Hop)
 			if err != nil {
 				log.Printf("raptorq encoding error: %s", err)
 				return //chao: return or continue
@@ -330,6 +331,13 @@ func (node *Node) BroadCastEncodedSymbol(ctx context.Context, raptorq *RaptorQIm
 }
 
 func (node *Node) RelayEncodedSymbol(pc net.PacketConn, symbol []byte) {
+	hop := symbol[HashSize]
+	if hop == 0 {
+		return
+	} else {
+		symbol[HashSize] = symbol[HashSize] - 1
+	}
+
 	L := len(node.PeerList)
 	idx0 := rand.Intn(L)
 	for i, _ := range node.PeerList {
@@ -361,16 +369,20 @@ func (node *Node) Gossip(pc net.PacketConn) {
 			log.Printf("gossip need received at least %d byte from peer %v", HashSize+2, addr)
 			continue
 		}
-		hash := buffer[0:HashSize]
+		copybuffer := make([]byte, n)
+		copy(copybuffer, buffer[:n])
+
+		hash := copybuffer[0:HashSize]
 		hashkey := ConvertToFixedSize(hash)
 		// not gossip its own message
 		if node.SenderCache[hashkey] {
 			continue
 		}
 		raptorq := node.InitRaptorQIfNotExist(hash)
-		z := int(binary.BigEndian.Uint32(buffer[HashSize : HashSize+4]))
-		esi := binary.BigEndian.Uint32(buffer[HashSize+4 : HashSize+8])
-		symbol := buffer[HashSize+8 : n]
+
+		z := int(binary.BigEndian.Uint32(copybuffer[HashSize+1 : HashSize+5]))
+		esi := binary.BigEndian.Uint32(copybuffer[HashSize+5 : HashSize+9])
+		symbol := copybuffer[HashSize+9 : n]
 		log.Printf("symbol esi=%v, received from block %v", esi, z)
 		// just relay once
 		if _, ok := raptorq.ReceivedSymbols[z][esi]; ok {
@@ -383,14 +395,15 @@ func (node *Node) Gossip(pc net.PacketConn) {
 		if len(raptorq.ReceivedSymbols[z])%100 == 0 {
 			log.Printf("node %v received source block %v , %v symbols", node.SelfPeer.Sid, z, len(raptorq.ReceivedSymbols[z]))
 		}
+
 		if raptorq.SuccessTime > 0 {
-			go node.RelayEncodedSymbol(pc, buffer[:n])
+			go node.RelayEncodedSymbol(pc, copybuffer[:n])
 			continue
 		}
 		if raptorq.Ready {
 			raptorq.Decoder[z].Decode(0, esi, symbol)
 		}
-		go node.RelayEncodedSymbol(pc, buffer[:n])
+		go node.RelayEncodedSymbol(pc, copybuffer[:n])
 		if raptorq.Decoder[z].IsSourceObjectReady() {
 			log.Printf("source object is ready for block %v", z)
 			go node.ResponseSuccess(hash, z)
@@ -520,9 +533,7 @@ func (node *Node) HandleMetaData(conn net.Conn) {
 
 // this is used for stop sender, will be replaced by consensus algorithm later
 func (node *Node) ResponseSuccess(hash []byte, z int) {
-	copyhash := make([]byte, len(hash))
-	copy(copyhash, hash)
-	okmsg := append(copyhash, Received)
+	okmsg := append(hash, Received)
 	Z := make([]byte, 4)
 	binary.BigEndian.PutUint32(Z, uint32(z))
 	okmsg = append(okmsg, Z...)
@@ -542,11 +553,21 @@ func (node *Node) ResponseSuccess(hash []byte, z int) {
 		conn, err := net.Dial("tcp", tcpaddr)
 		if err != nil {
 			log.Printf("dial to tcp addr %v failed with %v", tcpaddr, err)
+			backoff := ExpBackoffDelay(1000, 15000, 1.35)
+			for i := 0; i < 10; i++ {
+				time.Sleep(backoff(i, 0))
+				conn, err = net.Dial("tcp", tcpaddr)
+				if err == nil {
+					break
+				}
+			}
 		}
-		_, err = conn.Write(okmsg)
-		log.Printf("node %v send okay message for block %v to sender %v", node.SelfPeer.Sid, z, tcpaddr)
-		if err != nil {
-			log.Printf("send received message to sender %v failed with %v", tcpaddr, err)
+		if err == nil && conn != nil {
+			_, err = conn.Write(okmsg)
+			log.Printf("node %v send okay message for block %v to sender %v", node.SelfPeer.Sid, z, tcpaddr)
+			if err != nil {
+				log.Printf("send received message to sender %v failed with %v", tcpaddr, err)
+			}
 		}
 		return
 	}

@@ -14,7 +14,9 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_NAME_TAG = 'IDA Test Instance'
+#DEFAULT_NAME_TAG = 'IDA_test'
 DEFAULT_SSH_KEY = os.path.join(os.environ['HOME'], '.ssh', 'ida')
+#DEFAULT_SSH_KEY = os.path.join(os.environ['HOME'], '.ssh', 'ida.pem')
 DEFAULT_IDA_DIR = 'go/src/github.com/harmony-one/ida'
 
 

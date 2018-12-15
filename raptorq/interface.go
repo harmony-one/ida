@@ -45,19 +45,18 @@ type Node struct {
 	T1                 float64 // sender delay parameter
 	T2                 float64 // relay delay parameter
 	Base               float64 // sender delay parameter
+	Hop                int
 	mux                sync.Mutex
 }
 
 type RaptorQImpl struct {
-	SenderPubKey string
-	RootHash     []byte
-	NumBlocks    int
-	MaxBlockSize int
-	Threshold    int
-	CommonOTI    map[int]uint64
-	SpecificOTI  map[int]uint32
-	//Encoder      *libraptorq.FakeEncoder
-	//Decoder      *libraptorq.FakeDecoder
+	SenderPubKey    string
+	RootHash        []byte
+	NumBlocks       int
+	MaxBlockSize    int
+	Threshold       int
+	CommonOTI       map[int]uint64
+	SpecificOTI     map[int]uint32
 	Encoder         map[int]libraptorq.Encoder
 	Decoder         map[int]libraptorq.Decoder
 	ReceivedSymbols map[int]map[uint32]bool
