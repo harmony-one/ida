@@ -79,6 +79,7 @@ def _main():
         if len(ips1) < args.num_instances:
             raise RuntimeError(f"{region} has {len(ips1)} matching instances,"
                                f"should be greater or equal than {args.num_instances}")
+        logger.info(f"total {len(ips1)} running instances in {region}")
         ips1 = ips1[:args.num_instances]
         ips[region] = ips1
         print(f"in {region} will use {len(ips[region])} instances")

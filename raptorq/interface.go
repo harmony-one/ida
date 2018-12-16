@@ -47,6 +47,10 @@ type Node struct {
 	Base               float64 // sender delay parameter
 	Hop                int
 	mux                sync.Mutex
+	RelayMiss          int
+	TotalRelay         int
+	SendMiss           int
+	TotalSend          int
 }
 
 type RaptorQImpl struct {

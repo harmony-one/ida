@@ -107,6 +107,7 @@ func (node *Node) ReportUnfinishedBlocks(raptorq *RaptorQImpl, stop chan bool) {
 				}
 			}
 			log.Printf("total blocks: %v, unfinished blocks: %v", raptorq.NumBlocks, counter)
+			log.Printf("total send:%v, send miss:%v, total relay:%v, relay miss:%v", node.TotalSend, node.SendMiss, node.TotalRelay, node.RelayMiss)
 		}
 	}
 }
@@ -318,8 +319,14 @@ func (node *Node) BroadCastEncodedSymbol(ctx context.Context, raptorq *RaptorQIm
 				log.Printf("cannot resolve udp address %v", remoteAddr)
 			}
 			n, err = pc.WriteTo(symbol, addr)
+			node.mux.Lock()
+			node.TotalSend++
+			node.mux.Unlock()
 			if err != nil {
 				log.Printf("broadcast encoded symbol written error %v with %v symbol written", err, n)
+				node.mux.Lock()
+				node.SendMiss++
+				node.mux.Unlock()
 			}
 			if esi%100 == 0 {
 				log.Printf("block %v symbol %v sent to %v", z, esi, remoteAddr)
@@ -351,8 +358,14 @@ func (node *Node) RelayEncodedSymbol(pc net.PacketConn, symbol []byte) {
 		//log.Printf("relay symbol %v to %v", esi, addr)
 		time.Sleep(time.Duration(node.T2 * 1000000))
 		n, err := pc.WriteTo(symbol, addr)
+		node.mux.Lock()
+		node.TotalSend++
+		node.mux.Unlock()
 		if err != nil {
 			log.Printf("relay symbol failed at %v with %v bytes written", addr, n)
+			node.mux.Lock()
+			node.RelayMiss++
+			node.mux.Unlock()
 		}
 	}
 }
@@ -391,7 +404,7 @@ func (node *Node) Gossip(pc net.PacketConn) {
 		}
 
 		raptorq.ReceivedSymbols[z][esi] = true
-		if len(raptorq.ReceivedSymbols[z])%50 == 0 {
+		if len(raptorq.ReceivedSymbols[z])%50 == 0 && !raptorq.Decoder[z].IsSourceObjectReady() {
 			log.Printf("node %v received source block %v , %v symbols, latest symbol esi = %v", node.SelfPeer.Sid, z, len(raptorq.ReceivedSymbols[z]), esi)
 		}
 
