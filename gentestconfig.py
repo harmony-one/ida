@@ -187,7 +187,7 @@ def _main():
             for idx, ip in enumerate(all_ips):
                 query = sq(args.query)
                 logger.info(f"...{ip} searching {query}")
-                logger.info("**********************************************************"
+                logger.info("**********************************************************")
                 ssh(ip,f'cd {ida_dir} && ls -l ida.out && '
                         f'ag {query} ida.out | cat',check=True)
 
