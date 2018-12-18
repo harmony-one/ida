@@ -14,11 +14,11 @@ const (
 	Received             byte          = 3
 	SenderKey            byte          = 4
 	PubKeySize           int           = 20
-	Tau                  float32       = 0.8  // threshold rate of number of neighors decode message successfully
-	HashSize             int           = 20   // sha1 hash size
-	StopBroadCastTime    time.Duration = 1500 // unit is second
-	CacheClearInterval   time.Duration = 2500 // clear cache every xx seconds
-	EnforceClearInterval int64         = 3000 // clear old cache eventually
+	Tau                  float32       = 0.8 // threshold rate of number of neighors decode message successfully
+	HashSize             int           = 20  // sha1 hash size
+	StopBroadCastTime    time.Duration = 100 // unit is second
+	CacheClearInterval   time.Duration = 250 // clear cache every xx seconds
+	EnforceClearInterval int64         = 300 // clear old cache eventually
 	UDPCacheSize         int           = 40 * 1024 * 1024
 	MaxBlockSize         int           = 88 * 1024 // 75kb
 )
@@ -47,10 +47,6 @@ type Node struct {
 	Base               float64 // sender delay parameter
 	Hop                int
 	mux                sync.Mutex
-	RelayMiss          int
-	TotalRelay         int
-	SendMiss           int
-	TotalSend          int
 }
 
 type RaptorQImpl struct {
@@ -64,9 +60,10 @@ type RaptorQImpl struct {
 	Encoder         map[int]libraptorq.Encoder
 	Decoder         map[int]libraptorq.Decoder
 	ReceivedSymbols map[int]map[uint32]bool
-	Ready           bool
+	NumDecoded      int
 	InitTime        int64 //instance initiate time
 	SuccessTime     int64 //success decode time, UnixNano time
+	mux             sync.Mutex
 }
 
 // IDA broadcast using RaptorQ interface
