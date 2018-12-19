@@ -451,7 +451,6 @@ func (node *Node) AddDecodingReadyChan(hash []byte) {
 	for z, _ := range ready {
 		go node.HandleDecodeSuccess(hash, z, ready[z])
 	}
-
 }
 
 func (node *Node) InitRaptorQIfNotExist(hash []byte) *RaptorQImpl {
@@ -463,7 +462,7 @@ func (node *Node) InitRaptorQIfNotExist(hash []byte) *RaptorQImpl {
 		raptorq := RaptorQImpl{}
 		raptorq.Threshold = int(Tau * float32(len(node.AllPeers)))
 		raptorq.RootHash = hash
-		raptorq.MaxBlockSize = raptorq.MaxBlockSize
+		raptorq.MaxBlockSize = MaxBlockSize
 		raptorq.ReceivedSymbols = make(map[int]map[uint32]bool)
 		raptorq.Decoder = make(map[int]libraptorq.Decoder)
 		raptorq.CommonOTI = make(map[int]uint64)
