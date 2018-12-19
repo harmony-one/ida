@@ -2,6 +2,8 @@ received
 configs
 *.pdf
 *.png
+*.out
+*.dat
 .DS_Store
 /ida
 test1.txt
