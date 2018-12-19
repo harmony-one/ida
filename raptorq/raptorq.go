@@ -131,8 +131,19 @@ func (node *Node) StopBroadCast(cancels map[int]interface{}, raptorq *RaptorQImp
 
 func (node *Node) ClearCache() {
 	OneSec := int64(1000000000)
+	node.mux.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			node.mux.Unlock()
+		}
+	}()
 	for {
+		locked = false
+		node.mux.Unlock()
 		time.Sleep(CacheClearInterval * time.Second)
+		locked = true
+		node.mux.Lock()
 		currentTime := time.Now().UnixNano()
 		for k, v := range node.Cache {
 			if v.SuccessTime > 0 && currentTime-v.SuccessTime > int64(CacheClearInterval)*OneSec {
@@ -426,11 +437,13 @@ func (node *Node) Gossip(pc net.PacketConn) {
 func (node *Node) HandleDecodeSuccess(hash []byte, z int, ch chan uint8) {
 	<-ch
 	hashkey := ConvertToFixedSize(hash)
+	node.mux.Lock()
+	defer node.mux.Unlock()
 	raptorq := node.Cache[hashkey]
 	raptorq.mux.Lock()
+	defer raptorq.mux.Unlock()
 	raptorq.NumDecoded++
 	numDecoded := raptorq.NumDecoded
-	raptorq.mux.Unlock()
 	go node.ResponseSuccess(hash, z)
 	log.Printf("source object is ready for block %v", z)
 	if numDecoded >= raptorq.NumBlocks {
@@ -441,7 +454,11 @@ func (node *Node) HandleDecodeSuccess(hash []byte, z int, ch chan uint8) {
 
 func (node *Node) AddDecodingReadyChan(hash []byte) {
 	hashkey := ConvertToFixedSize(hash)
+	node.mux.Lock()
+	defer node.mux.Unlock()
 	raptorq := node.Cache[hashkey]
+	raptorq.mux.Lock()
+	defer raptorq.mux.Unlock()
 	Z := raptorq.NumBlocks
 	var ready []chan uint8
 	for z := 0; z < Z; z++ {
@@ -457,6 +474,7 @@ func (node *Node) InitRaptorQIfNotExist(hash []byte) *RaptorQImpl {
 	//hashkey := hex.EncodeToString(hash)
 	hashkey := ConvertToFixedSize(hash)
 	node.mux.Lock()
+	defer node.mux.Unlock()
 	if node.Cache[hashkey] == nil {
 		log.Printf("raptorq initialized with hash %v", hashkey)
 		raptorq := RaptorQImpl{}
@@ -470,7 +488,6 @@ func (node *Node) InitRaptorQIfNotExist(hash []byte) *RaptorQImpl {
 		raptorq.InitTime = time.Now().UnixNano()
 		node.Cache[hashkey] = &raptorq
 	}
-	node.mux.Unlock()
 	return node.Cache[hashkey]
 }
 
@@ -532,6 +549,8 @@ func (node *Node) HandleMetaData(conn net.Conn) {
 			log.Printf("unable to set decoders for raptorq")
 		}
 		hashkey := ConvertToFixedSize(hash)
+		node.mux.Lock()
+		defer node.mux.Unlock()
 		node.Cache[hashkey] = raptorq
 		go node.AddDecodingReadyChan(hash)
 		log.Printf("metadata received, raptorq ready")
@@ -572,7 +591,10 @@ func (node *Node) ResponseSuccess(hash []byte, z int) {
 	binary.BigEndian.PutUint32(sid, uint32(node.SelfPeer.Sid))
 	okmsg = append(okmsg, sid...)
 	hashkey := ConvertToFixedSize(hash)
-	senderPubKey := node.Cache[hashkey].SenderPubKey
+	node.mux.Lock()
+	raptorq := node.Cache[hashkey]
+	node.mux.Unlock()
+	senderPubKey := raptorq.SenderPubKey
 	for _, peer := range node.AllPeers {
 		if peer.PubKey != senderPubKey {
 			continue
