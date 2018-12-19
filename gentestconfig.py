@@ -18,7 +18,9 @@ DEFAULT_NAME_TAG = 'IDA_test_1'
 #DEFAULT_SSH_KEY = os.path.join(os.environ['HOME'], '.ssh', 'ida')
 DEFAULT_SSH_KEY = os.path.join(os.environ['HOME'], '.ssh', 'ida.pem')
 DEFAULT_IDA_DIR = 'go/src/github.com/harmony-one/ida'
-
+DEFAULT_T0 = 5
+DEFAULT_T1 = 50
+DEFAULT_EXP_BASE = 1.01
 
 
 def _main():
@@ -45,6 +47,15 @@ def _main():
                         help=f"""the node is in a given region to login""")
     parser.add_argument('--query', metavar='search query',
                         help=f"""search given query from the nodes """)
+    parser.add_argument('--t0', type=int, metavar='MILLISECONDS',
+                        help=f"""minimum interpacket delay
+                                 (default: {DEFAULT_T0})""")
+    parser.add_argument('--t1', type=int, metavar='MILLISECONDS',
+                        help=f"""minimum interpacket delay
+                                 (default: {DEFAULT_T1})""")
+    parser.add_argument('--exp-base', type=float, metavar='NUM',
+                        help=f"""interpacket delay exponential base
+                                 (default: {DEFAULT_EXP_BASE})""")
     parser.add_argument('num_instances', type=int, metavar='N',
                         help="""number of instances""")
     parser.add_argument('regions', nargs='+', metavar='REGION',
@@ -54,7 +65,10 @@ def _main():
                         ssh_key=DEFAULT_SSH_KEY,
                         ssh_user='ubuntu',
                         ida_dir=DEFAULT_IDA_DIR,
-                        actions='send')
+                        actions='send',
+                        t0=DEFAULT_T0,
+                        t1=DEFAULT_T1,
+                        exp_base=DEFAULT_EXP_BASE)
     args = parser.parse_args()
 
     logger.info(f"collecting all IP addresses")
@@ -176,9 +190,9 @@ def _main():
                 f'-nbr_config configs/config.txt '
                 f'-all_config configs/all_peers.txt '
                 f'-broadcast -msg_file {hex_hash}.dat '
-                f'-t0 5 '
-                f'-t1 50 '
-                f'-base 1.01 '
+                f'-t0 {args.t0} '
+                f'-t1 {args.t1} '
+                f'-base {args.exp_base} '
                 f'2>&1 | tee ida.out',
                 check=True)
         elif action == 'grep':
