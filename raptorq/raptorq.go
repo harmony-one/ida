@@ -173,7 +173,12 @@ func (raptorq *RaptorQImpl) ConstructMetaData() []byte {
 	Z := make([]byte, 4)
 	binary.BigEndian.PutUint32(Z, uint32(raptorq.NumBlocks))
 	packet = append(packet, Z...)
-	for i := raptorq.NumBlocks - 2; i <= raptorq.NumBlocks-1; i++ {
+	var a, b int
+	if raptorq.NumBlocks > 1 {
+		a = raptorq.NumBlocks - 2
+		b = raptorq.NumBlocks - 1
+	}
+	for i := a; i <= b; i++ {
 		commonoti := make([]byte, 8)
 		binary.BigEndian.PutUint64(commonoti, raptorq.Encoder[i].CommonOTI())
 		specificoti := make([]byte, 4)
@@ -194,7 +199,7 @@ func (raptorq *RaptorQImpl) ConstructSymbolPack(z int, esi uint32, hop int) ([]b
 	if err != nil {
 		return nil, err
 	}
-	//log.Printf("encoded esi=%+v symbol=%+v n=%+v err=%+v", esi, symbol, n, err)
+	//log.Printf("encoded esi=%+v symbol=%+v z=%+v T=%+v err=%+v", esi, symbol, z, T, err)
 	packet := append(raptorq.RootHash, byte(hop))
 	Z := make([]byte, 4)
 	binary.BigEndian.PutUint32(Z, uint32(z))
@@ -219,7 +224,7 @@ func (raptorq *RaptorQImpl) SetEncoder(msg []byte) error {
 	// WS: working memory, maxSubBlockSize, assume it to be 8KB
 	var WS uint32 = 16 * 1024
 	// minimum sub-symbol size is SS, must be a multiple of Al
-	var minSubSymbolSize uint16 = 1
+	var minSubSymbolSize uint16 = 1 //T / uint16(Al)
 
 	F := len(msg)
 	B := raptorq.MaxBlockSize
@@ -253,8 +258,18 @@ func (raptorq *RaptorQImpl) SetEncoder(msg []byte) error {
 
 func (raptorq *RaptorQImpl) SetDecoder() error {
 	var idx int
+	decf := raptorfactory.DefaultDecoderFactory()
+	if raptorq.NumBlocks == 1 {
+		decoder, err := decf.New(raptorq.CommonOTI[0], raptorq.SpecificOTI[0])
+		if err == nil {
+			raptorq.Decoder[0] = decoder
+		} else {
+			return err
+		}
+		return nil
+	}
+
 	for i := 0; i < raptorq.NumBlocks; i++ {
-		decf := raptorfactory.DefaultDecoderFactory()
 		if i < raptorq.NumBlocks-1 {
 			idx = 0
 		} else {
@@ -414,10 +429,11 @@ func (node *Node) HandleDecodeSuccess(hash []byte, z int, ch chan uint8) {
 	raptorq := node.Cache[hashkey]
 	raptorq.mux.Lock()
 	raptorq.NumDecoded++
+	numDecoded := raptorq.NumDecoded
 	raptorq.mux.Unlock()
 	go node.ResponseSuccess(hash, z)
 	log.Printf("source object is ready for block %v", z)
-	if raptorq.NumDecoded >= raptorq.NumBlocks {
+	if numDecoded >= raptorq.NumBlocks {
 		raptorq.SuccessTime = time.Now().UnixNano()
 		go WriteReceivedMessage(raptorq)
 	}
@@ -490,8 +506,11 @@ func (node *Node) HandleMetaData(conn net.Conn) {
 			log.Printf("number of blocks decoding error")
 		}
 		raptorq.NumBlocks = int(binary.BigEndian.Uint32(Z))
-
-		for i := 0; i < 2; i++ {
+		var b int
+		if raptorq.NumBlocks > 1 {
+			b = 1
+		}
+		for i := 0; i <= b; i++ {
 
 			eightBytes := make([]byte, 8)
 			_, err := io.ReadFull(c, eightBytes)

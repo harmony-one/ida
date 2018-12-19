@@ -4,6 +4,7 @@ configs
 *.png
 .DS_Store
 /ida
+test1.txt
 
 # --- BEGIN https://raw.githubusercontent.com/github/gitignore/master/Global/JetBrains.gitignore ---
 # Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio and WebStorm

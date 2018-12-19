@@ -9,6 +9,7 @@ do
         break
         ;;
     esac
-   ./ida -nbr_config configs/config_$i.txt  -all_config configs/config_allpeers.txt &
+ #  ./ida -nbr_config configs/config_$i.txt  -all_config configs/config_allpeers.txt > server_$i.out 2>&1 &
+   ./ida -nbr_config configs/config_$i.txt  -all_config configs/config_allpeers.txt 
    i=$((${i} + 1))
 done
