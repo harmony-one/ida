@@ -426,6 +426,10 @@ func (node *Node) Gossip(pc net.PacketConn) {
 		//		if len(raptorq.ReceivedSymbols[z])%50 == 0 && !raptorq.Decoder[z].IsSourceObjectReady() {
 		//			log.Printf("node %v received source block %v , %v symbols, latest symbol esi = %v", node.SelfPeer.Sid, z, len(raptorq.ReceivedSymbols[z]), esi)
 		//		}
+		if _,ok:=raptorq.Decoder[z];!ok{
+			log.Printf("symbol esi %v skipped because decoder not exist for block %v", esi, z)
+			continue
+		}
 
 		if !raptorq.Decoder[z].IsSourceObjectReady() {
 			raptorq.Decoder[z].Decode(0, esi, symbol)
