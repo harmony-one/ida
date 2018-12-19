@@ -69,8 +69,18 @@ func (node *Node) BroadCast(msg []byte, pc net.PacketConn) (map[int]interface{},
 		if node.SelfPeer.PubKey == peer.PubKey {
 			continue
 		}
+		tcpaddr := net.JoinHostPort(peer.Ip, peer.TCPPort)
+		conn, err := net.Dial("tcp", tcpaddr)
+		if err != nil {
+			log.Printf("cannot connect to peer %v:%v", peer.Ip, peer.TCPPort)
+			continue
+		}
+		log.Printf("connection established to peer %s", tcpaddr)
+		timeoutDuration := 2 * time.Second
+		conn.SetWriteDeadline(time.Now().Add(timeoutDuration))
+
 		wg.Add(1)
-		go SendMetaData(&raptorq, &peer, msg, &wg)
+		go SendMetaData(&raptorq, conn, msg, &wg)
 	}
 	wg.Wait()
 
@@ -289,20 +299,11 @@ func (raptorq *RaptorQImpl) SetDecoder() error {
 	return nil
 }
 
-func SendMetaData(raptorq *RaptorQImpl, peer *Peer, msg []byte, wg *sync.WaitGroup) {
-	defer wg.Done()
-	tcpaddr := net.JoinHostPort(peer.Ip, peer.TCPPort)
-	conn, err := net.Dial("tcp", tcpaddr)
-	if err != nil {
-		log.Printf("cannot connect to peer %v:%v", peer.Ip, peer.TCPPort)
-		return
-	}
-	log.Printf("connection established to peer %s", tcpaddr)
-	timeoutDuration := 2 * time.Second
-	conn.SetWriteDeadline(time.Now().Add(timeoutDuration))
+func SendMetaData(raptorq *RaptorQImpl, conn net.Conn, msg []byte, wg *sync.WaitGroup) {
 	defer conn.Close()
+	defer wg.Done()
 	metadata := raptorq.ConstructMetaData()
-	_, err = conn.Write(metadata)
+	_, err := conn.Write(metadata)
 	if err != nil {
 		log.Printf("send metadata failed at peer %v with error %s", conn.RemoteAddr(), err)
 		return
@@ -426,7 +427,7 @@ func (node *Node) Gossip(pc net.PacketConn) {
 		//		if len(raptorq.ReceivedSymbols[z])%50 == 0 && !raptorq.Decoder[z].IsSourceObjectReady() {
 		//			log.Printf("node %v received source block %v , %v symbols, latest symbol esi = %v", node.SelfPeer.Sid, z, len(raptorq.ReceivedSymbols[z]), esi)
 		//		}
-		if _,ok:=raptorq.Decoder[z];!ok{
+		if _, ok := raptorq.Decoder[z]; !ok {
 			log.Printf("symbol esi %v skipped because decoder not exist for block %v", esi, z)
 			continue
 		}
