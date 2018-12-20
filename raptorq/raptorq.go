@@ -50,7 +50,6 @@ func (node *Node) BroadCast(msg []byte, pc net.PacketConn) (map[int]interface{},
 	log.Printf("threshold value is %v", raptorq.Threshold)
 	raptorq.SenderPubKey = node.SelfPeer.PubKey
 	raptorq.RootHash = GetRootHash(msg)
-	raptorq.InitTime = time.Now().UnixNano()
 	raptorq.Encoder = make(map[int]libraptorq.Encoder)
 	raptorq.MaxBlockSize = MaxBlockSize
 	err := raptorq.SetEncoder(msg)
@@ -84,6 +83,7 @@ func (node *Node) BroadCast(msg []byte, pc net.PacketConn) (map[int]interface{},
 	}
 	wg.Wait()
 
+	raptorq.InitTime = time.Now().UnixNano()
 	cancels := make(map[int]interface{})
 	for z := 0; z < raptorq.NumBlocks; z++ {
 		ctx, cancel := context.WithCancel(context.Background())
