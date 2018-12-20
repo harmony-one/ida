@@ -4,6 +4,7 @@ configs
 *.png
 *.out
 *.dat
+*.log
 .DS_Store
 /ida
 test1.txt

@@ -79,7 +79,7 @@ func (node *Node) BroadCast(msg []byte, pc net.PacketConn) (map[int]interface{},
 		conn.SetWriteDeadline(time.Now().Add(timeoutDuration))
 
 		wg.Add(1)
-		go SendMetaData(&raptorq, conn, msg, &wg)
+		go SendMetaData(&raptorq, conn, &wg)
 	}
 	wg.Wait()
 
@@ -88,7 +88,7 @@ func (node *Node) BroadCast(msg []byte, pc net.PacketConn) (map[int]interface{},
 	for z := 0; z < raptorq.NumBlocks; z++ {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancels[z] = cancel
-		go node.BroadCastEncodedSymbol(ctx, &raptorq, pc, msg, z)
+		go node.BroadCastEncodedSymbol(ctx, &raptorq, pc, z)
 	}
 	return cancels, &raptorq
 }
@@ -206,6 +206,13 @@ func (raptorq *RaptorQImpl) ConstructMetaData() []byte {
 	return packet
 }
 
+func symDebug(prefix string, z int, esi uint32, symbol []byte) {
+	symhash := sha1.Sum(symbol)
+	symhh := make([]byte, hex.EncodedLen(len(symhash)))
+	hex.Encode(symhh, symhash[:])
+	log.Printf("%s: z=%+v esi=%+v len=%v symhh=%s", prefix, z, esi, len(symbol), symhh)
+}
+
 func (raptorq *RaptorQImpl) ConstructSymbolPack(z int, esi uint32, hop int) ([]byte, error) {
 	T := raptorq.Encoder[z].SymbolSize()
 	symbol := make([]byte, int(T))
@@ -213,8 +220,10 @@ func (raptorq *RaptorQImpl) ConstructSymbolPack(z int, esi uint32, hop int) ([]b
 	if err != nil {
 		return nil, err
 	}
-	//log.Printf("encoded esi=%+v symbol=%+v z=%+v T=%+v err=%+v", esi, symbol, z, T, err)
-	packet := append(raptorq.RootHash, byte(hop))
+	symDebug("encoded", z, esi, symbol)
+	packet := make([]byte, 0)
+	packet = append(packet, raptorq.RootHash...)
+	packet = append(packet, byte(hop))
 	Z := make([]byte, 4)
 	binary.BigEndian.PutUint32(Z, uint32(z))
 	packet = append(packet, Z...)
@@ -236,7 +245,7 @@ func (raptorq *RaptorQImpl) SetEncoder(msg []byte) error {
 	// T: symbol size, can take it to be maximum payload size, multiple of Al
 	var T uint16 = 1024
 	// WS: working memory, maxSubBlockSize, assume it to be 8KB
-	var WS uint32 = 16 * 1024
+	var WS uint32 = 32 * 1024
 	// minimum sub-symbol size is SS, must be a multiple of Al
 	var minSubSymbolSize uint16 = 1 //T / uint16(Al)
 
@@ -300,7 +309,7 @@ func (raptorq *RaptorQImpl) SetDecoder() error {
 	return nil
 }
 
-func SendMetaData(raptorq *RaptorQImpl, conn net.Conn, msg []byte, wg *sync.WaitGroup) {
+func SendMetaData(raptorq *RaptorQImpl, conn net.Conn, wg *sync.WaitGroup) {
 	defer conn.Close()
 	defer wg.Done()
 	metadata := raptorq.ConstructMetaData()
@@ -323,7 +332,7 @@ func ExpBackoffDelay(t0 float64, t1 float64, base float64) func(int, int) time.D
 	}
 }
 
-func (node *Node) BroadCastEncodedSymbol(ctx context.Context, raptorq *RaptorQImpl, pc net.PacketConn, msg []byte, z int) {
+func (node *Node) BroadCastEncodedSymbol(ctx context.Context, raptorq *RaptorQImpl, pc net.PacketConn, z int) {
 	var esi uint32
 	peerList := node.PeerList
 	L := len(peerList)
@@ -336,7 +345,6 @@ func (node *Node) BroadCastEncodedSymbol(ctx context.Context, raptorq *RaptorQIm
 			log.Printf("block %v broadcast stopped", z)
 			return
 		default:
-			// for prototype, use fixed time duration after K symbols sent
 			k := int(esi)
 			time.Sleep(backoff(k, k0))
 
@@ -363,12 +371,12 @@ func (node *Node) BroadCastEncodedSymbol(ctx context.Context, raptorq *RaptorQIm
 	}
 }
 
-func (node *Node) RelayEncodedSymbol(pc net.PacketConn, symbol []byte) {
-	hop := symbol[HashSize]
+func (node *Node) RelayEncodedSymbol(pc net.PacketConn, packet []byte) {
+	hop := packet[HashSize]
 	if hop == 0 {
 		return
 	} else {
-		symbol[HashSize] = symbol[HashSize] - 1
+		packet[HashSize] = packet[HashSize] - 1
 	}
 
 	L := len(node.PeerList)
@@ -381,10 +389,10 @@ func (node *Node) RelayEncodedSymbol(pc net.PacketConn, symbol []byte) {
 		if err != nil {
 			log.Printf("cannot resolve udp address %v", remoteAddr)
 		}
-		//	esi := binary.BigEndian.Uint32(symbol[HashSize+1 : HashSize+5])
+		//	esi := binary.BigEndian.Uint32(packet[HashSize+1 : HashSize+5])
 		//log.Printf("relay symbol %v to %v", esi, addr)
 		time.Sleep(time.Duration(node.T2 * 1000000))
-		n, err := pc.WriteTo(symbol, addr)
+		n, err := pc.WriteTo(packet, addr)
 		if err != nil {
 			log.Printf("relay symbol failed at %v with %v bytes written", addr, n)
 		}
@@ -398,8 +406,8 @@ func (node *Node) Gossip(pc net.PacketConn) {
 		if err != nil {
 			log.Printf("gossip receive response from peer %v with error %s", addr, err)
 			continue
-		} else if n < HashSize+1 {
-			log.Printf("gossip need received at least %d byte from peer %v", HashSize+2, addr)
+		} else if n < HashSize+9 {
+			log.Printf("gossip need received at least %d byte from peer %v", HashSize+9, addr)
 			continue
 		}
 		copybuffer := make([]byte, n)
@@ -416,6 +424,7 @@ func (node *Node) Gossip(pc net.PacketConn) {
 		z := int(binary.BigEndian.Uint32(copybuffer[HashSize+1 : HashSize+5]))
 		esi := binary.BigEndian.Uint32(copybuffer[HashSize+5 : HashSize+9])
 		symbol := copybuffer[HashSize+9 : n]
+		symDebug("received", z, esi, symbol)
 
 		if _, ok := raptorq.ReceivedSymbols[z]; !ok {
 			raptorq.ReceivedSymbols[z] = make(map[uint32]bool)
@@ -442,7 +451,8 @@ func (node *Node) Gossip(pc net.PacketConn) {
 }
 
 func (node *Node) HandleDecodeSuccess(hash []byte, z int, ch chan uint8) {
-	<-ch
+	sbn, ok := <-ch
+	log.Printf("ready channel returned sbn=%+v ok=%+v", sbn, ok)
 	hashkey := ConvertToFixedSize(hash)
 	node.mux.Lock()
 	defer node.mux.Unlock()
