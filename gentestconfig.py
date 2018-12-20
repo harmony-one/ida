@@ -8,6 +8,8 @@ import os.path
 import shlex
 import subprocess
 import sys
+from pssh.clients import ParallelSSHClient
+from gevent import joinall
 
 sq = shlex.quote
 logger = logging.getLogger(__name__)
@@ -18,7 +20,7 @@ DEFAULT_SSH_KEY = os.path.join(os.environ['HOME'], '.ssh', 'ida')
 DEFAULT_IDA_DIR = 'go/src/github.com/harmony-one/ida'
 DEFAULT_T0 = 5
 DEFAULT_T1 = 50
-DEFAULT_EXP_BASE = 1.01
+DEFAULT_EXP_BASE = 1.05
 
 
 def _main():
@@ -99,7 +101,19 @@ def _main():
 
     ida_dir = sq(args.ida_dir)
 
-    def ssh(ip, cmd, **kwargs):
+    def ssh(host_list, cmd, **kargs):
+        try:
+            client = ParallelSSHClient(host_list,user='ubuntu',pkey=f'{sq(args.ssh_key)}')
+            output = client.run_command(cmd,**kargs)
+            for host in output:
+                logger.info(host)
+                for line in output[host]['stdout']:
+                    logger.info(line)
+        except:
+            logger.info('cannot connect to all the hosts')
+            return
+
+    def ssh1(ip, cmd, **kwargs):
         return subprocess.run(['ssh',
                                '-oStrictHostKeyChecking=no',
                                '-oUserKnownHostsFile=/dev/null',
@@ -136,40 +150,33 @@ def _main():
                 peer_configs[idx] = peer_config.getvalue().encode()
 
             logger.info(f"removing old config files")
-            for idx, ip in enumerate(all_ips):
-                logger.info(f"... {ip}")
-                ssh(ip, f'rm -f {ida_dir}/configs/*')
+            ssh(all_ips, f'rm -f {ida_dir}/configs/*')
 
+            with open('all_peers.txt','wb') as f:
+                f.write(all_peers_config)
             logger.info(f"copying all-peer configs")
-            for idx, ip in enumerate(all_ips):
-                logger.info(f"... {ip}")
-                ssh(ip, f'cat > {ida_dir}/configs/all_peers.txt',
-                    input=all_peers_config, check=True)
+            client = ParallelSSHClient(all_ips,user='ubuntu',pkey=f'{sq(args.ssh_key)}')
+            greenlets = client.copy_file('all_peers.txt', f'{ida_dir}/configs/all_peers.txt')
+            joinall(greenlets, raise_error=True)
 
             logger.info(f"copying per-peer configs")
             for idx, ip in enumerate(all_ips):
                 logger.info(f"... {ip}")
-                ssh(ip, f'cat > {ida_dir}/configs/config.txt',
+                ssh1(ip, f'cat > {ida_dir}/configs/config.txt',
                     input=peer_configs[idx], check=True)
 
         elif action == 'start':
             logger.info(f"starting server")
-            for idx, ip in enumerate(all_ips):
-                logger.info(f"... {ip}")
-                if idx == 0:
-                    continue
-                ssh(ip,
-                    f'cd {ida_dir} && ls -l ida && {{ ./ida '
-                    '-nbr_config configs/config.txt '
-                    '-all_config configs/all_peers.txt '
-                    '> ida.out 2>&1 & ls -l ida.out || :; }',
-                    check=True)
+            logger.info(all_ips[1:])
+            ssh(all_ips[1:],
+                f'cd {ida_dir} && ls -l ida && {{ ./ida '
+                '-nbr_config configs/config.txt '
+                '-all_config configs/all_peers.txt '
+                '> ida.out 2>&1 & ls -l ida.out || :; }')
 
         elif action == 'stop':
             logger.info(f"stopping server, and remove received files")
-            for idx, ip in enumerate(all_ips):
-                logger.info(f"... {ip}")
-                ssh(ip, f'killall ida && rm -f {ida_dir}/received/*')
+            ssh(all_ips, f'killall ida && rm -f {ida_dir}/received/*')
 
         elif action == 'send':
             if args.file is None:
@@ -183,7 +190,7 @@ def _main():
             ssh(all_ips[0], f'cat > {ida_dir}/{hex_hash}.dat',
                     input=contents, check=True)
             logger.info(f"invoking ida")
-            ssh(all_ips[0],
+            ssh1(all_ips[0],
                 f'cd {ida_dir} && ./ida '
                 f'-nbr_config configs/config.txt '
                 f'-all_config configs/all_peers.txt '
@@ -193,27 +200,24 @@ def _main():
                 f'-base {args.exp_base} '
                 f'2>&1 | tee ida.out',
                 check=True)
+
         elif action == 'grep':
             if args.query is None:
                 parser.error("--query not specified")
+            query = sq(args.query)
             logger.info(f"searching for {args.query} from nodes")
-            for idx, ip in enumerate(all_ips):
-                query = sq(args.query)
-                logger.info(f"...{ip} searching {query}")
-                logger.info("**********************************************************")
-                ssh(ip,f'cd {ida_dir} && ls -l ida.out && '
-                        f'ag {query} ida.out | cat',check=True)
+            logger.info("**********************************************************")
+            ssh(all_ips,f'cd {ida_dir} && ls -l ida.out && '
+                f'ag {query} ida.out | cat')
 
         elif action == 'update':
             logger.info(f"downloading new binary from s3")
             url = 'https://s3.us-east-2.amazonaws.com/harmony-ida-binary/ida'
-            for ip in all_ips:
-                logger.info(f"... {ip}")
-                ssh(ip,
-                    f'cd {ida_dir} && '
-                    f'rm -f ida && '
-                    f'curl -LsS -o ida {url} && '
-                    f'chmod a+x ida')
+            ssh(all_ips,
+                f'cd {ida_dir} && '
+                f'rm -f ida && '
+                f'curl -LsS -o ida {url} && '
+                f'chmod a+x ida')
 
 
 if __name__ == '__main__':

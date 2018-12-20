@@ -257,6 +257,7 @@ func (raptorq *RaptorQImpl) SetEncoder(msg []byte) error {
 			b = F
 		}
 		piece := msg[a:b]
+		log.Printf("sha1 hash of block %v is %v", i, GetRootHash(piece))
 		encoder, err := encf.New(piece, T, minSubSymbolSize, WS, Al)
 		log.Printf("encoder %v is created with size %v", i, b-a)
 		if err == nil {
@@ -415,14 +416,15 @@ func (node *Node) Gossip(pc net.PacketConn) {
 		z := int(binary.BigEndian.Uint32(copybuffer[HashSize+1 : HashSize+5]))
 		esi := binary.BigEndian.Uint32(copybuffer[HashSize+5 : HashSize+9])
 		symbol := copybuffer[HashSize+9 : n]
-		// just relay once
-		if _, ok := raptorq.ReceivedSymbols[z][esi]; ok {
-			continue
-		}
+
 		if _, ok := raptorq.ReceivedSymbols[z]; !ok {
 			raptorq.ReceivedSymbols[z] = make(map[uint32]bool)
 		}
 
+		// just relay once
+		if raptorq.ReceivedSymbols[z][esi] {
+			continue
+		}
 		raptorq.ReceivedSymbols[z][esi] = true
 		//		if len(raptorq.ReceivedSymbols[z])%50 == 0 && !raptorq.Decoder[z].IsSourceObjectReady() {
 		//			log.Printf("node %v received source block %v , %v symbols, latest symbol esi = %v", node.SelfPeer.Sid, z, len(raptorq.ReceivedSymbols[z]), esi)
@@ -451,6 +453,10 @@ func (node *Node) HandleDecodeSuccess(hash []byte, z int, ch chan uint8) {
 	numDecoded := raptorq.NumDecoded
 	go node.ResponseSuccess(hash, z)
 	log.Printf("source object is ready for block %v", z)
+	F := raptorq.Decoder[z].TransferLength()
+	buf := make([]byte, F)
+	raptorq.Decoder[z].SourceObject(buf)
+	log.Printf("sha1 hash for block %v is %v", z, GetRootHash(buf))
 	if numDecoded >= raptorq.NumBlocks {
 		raptorq.SuccessTime = time.Now().UnixNano()
 		go WriteReceivedMessage(raptorq)
