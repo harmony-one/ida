@@ -19,8 +19,8 @@ const (
 	StopBroadCastTime    time.Duration = 100 // unit is second
 	CacheClearInterval   time.Duration = 250 // clear cache every xx seconds
 	EnforceClearInterval int64         = 300 // clear old cache eventually
-	UDPCacheSize         int           = 40 * 1024 * 1024
-	MaxBlockSize         int           = 88 * 1024 // 75kb
+	UDPCacheSize         int           = 76 * 1024
+	MaxBlockSize         int           = 88 * 1024
 )
 
 type Peer struct {
@@ -64,6 +64,7 @@ type RaptorQImpl struct {
 	InitTime        int64 //instance initiate time
 	SuccessTime     int64 //success decode time, UnixNano time
 	mux             sync.Mutex
+	Stats           map[int]float64 // for benchmark purpose
 }
 
 // IDA broadcast using RaptorQ interface

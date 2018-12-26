@@ -51,6 +51,7 @@ func (node *Node) BroadCast(msg []byte, pc net.PacketConn) (map[int]interface{},
 	raptorq.SenderPubKey = node.SelfPeer.PubKey
 	raptorq.RootHash = GetRootHash(msg)
 	raptorq.Encoder = make(map[int]libraptorq.Encoder)
+	raptorq.Stats = make(map[int]float64)
 	raptorq.MaxBlockSize = MaxBlockSize
 	err := raptorq.SetEncoder(msg)
 	log.Printf("encoder created")
@@ -126,13 +127,20 @@ func (node *Node) StopBroadCast(cancels map[int]interface{}, raptorq *RaptorQImp
 				continue
 			}
 			if node.PeerDecodedCounter[hashkey][z] >= raptorq.Threshold {
-				log.Printf("block %v broadcast finished with time elapse = %v ms", z, float64(time.Now().UnixNano()-raptorq.InitTime)/1000000)
+				delta := float64(time.Now().UnixNano()-raptorq.InitTime) / 1000000
+				raptorq.mux.Lock()
+				raptorq.Stats[z] = delta
+				raptorq.mux.Unlock()
 				cancels[z].(context.CancelFunc)()
 				canceled[z] = true
 			}
 		}
 		if len(canceled) >= raptorq.NumBlocks {
 			//stop <- true
+			log.Printf("t0/t1/base/hop: %v, %v, %v, %v", node.T0, node.T1, node.Base, node.Hop)
+			for z, delta := range raptorq.Stats {
+				log.Printf("block %v broadcast finished with time elapse = %v ms", z, delta)
+			}
 			return
 		}
 		time.Sleep(200 * time.Millisecond)
