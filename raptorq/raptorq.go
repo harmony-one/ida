@@ -137,10 +137,11 @@ func (node *Node) StopBroadCast(cancels map[int]interface{}, raptorq *RaptorQImp
 		}
 		if len(canceled) >= raptorq.NumBlocks {
 			//stop <- true
-			log.Printf("t0/t1/base/hop: %v, %v, %v, %v", node.T0, node.T1, node.Base, node.Hop)
+			log.Printf("t0/t1/base/hop: %v ms, %v ms, %v, %v", node.T0, node.T1, node.Base, node.Hop)
 			for z, delta := range raptorq.Stats {
 				log.Printf("block %v broadcast finished with time elapse = %v ms", z, delta)
 			}
+			log.Printf("totol broadcast time: %v ms",float64(time.Now().UnixNano()-raptorq.InitTime) / 1000000)
 			return
 		}
 		time.Sleep(200 * time.Millisecond)
