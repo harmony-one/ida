@@ -51,7 +51,7 @@ def _main():
                         help=f"""minimum interpacket delay
                                  (default: {DEFAULT_T0})""")
     parser.add_argument('--t1', type=int, metavar='MILLISECONDS',
-                        help=f"""minimum interpacket delay
+                        help=f"""maximum interpacket delay
                                  (default: {DEFAULT_T1})""")
     parser.add_argument('--exp-base', type=float, metavar='NUM',
                         help=f"""interpacket delay exponential base
@@ -187,7 +187,7 @@ def _main():
             hex_hash = hashlib.sha1(contents).hexdigest()
             logger.info(f"{len(contents)} byte(s), sha1 {hex_hash}")
             logger.info(f"copying over")
-            ssh(all_ips[0], f'cat > {ida_dir}/{hex_hash}.dat',
+            ssh1(all_ips[0], f'cat > {ida_dir}/{hex_hash}.dat',
                     input=contents, check=True)
             logger.info(f"invoking ida")
             ssh1(all_ips[0],
