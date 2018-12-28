@@ -59,8 +59,6 @@ type RaptorQImpl struct {
 	numChunks       int
 	chunkSize       int
 	threshold       int
-	metaCommonOTI   map[int]uint64
-	metaSpecificOTI map[int]uint32
 	receivedSymbols map[int]map[uint32]bool
 	numDecoded      int
 	initTime        int64 //instance initiate time

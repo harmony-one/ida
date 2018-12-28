@@ -51,6 +51,7 @@ func (node *Node) BroadCast(msg []byte, pc net.PacketConn) (map[int]interface{},
 	raptorq.Encoder = make(map[int]libraptorq.Encoder)
 	raptorq.stats = make(map[int]float64)
 	raptorq.chunkSize = normalChunkSize
+	raptorq.initTime = time.Now().UnixNano()
 
 	hashkey := ConvertToFixedSize(raptorq.rootHash)
 	node.SenderCache[hashkey] = true
@@ -113,6 +114,7 @@ func (node *Node) StopBroadCast(cancels map[int]interface{}, raptorq *RaptorQImp
 				raptorq.mux.Unlock()
 				cancels[z].(context.CancelFunc)()
 				canceled[z] = true
+				log.Printf("***** chunkID %v canceled", z)
 			}
 		}
 		if len(canceled) >= raptorq.numChunks {
@@ -121,7 +123,7 @@ func (node *Node) StopBroadCast(cancels map[int]interface{}, raptorq *RaptorQImp
 			for z, delta := range raptorq.stats {
 				log.Printf("block %v broadcast finished with time elapse = %v ms", z, delta)
 			}
-			log.Printf("totol broadcast time: %v ms", float64(time.Now().UnixNano()-raptorq.initTime)/1000000)
+			log.Printf("total broadcast time: %v ms", float64(time.Now().UnixNano()-raptorq.initTime)/1000000)
 			return
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -248,7 +250,7 @@ func (raptorq *RaptorQImpl) setEncoderIfNotExist(msg []byte, chunkID int) error 
 	} else {
 		return err
 	}
-	log.Printf("numChunks=%v, chunkID=%v, numMinSymbols=%v", raptorq.numChunks, chunkID, raptorq.Encoder[0].MinSymbols(0))
+	log.Printf("numChunks=%v, chunkID=%v, numMinSymbols=%v", raptorq.numChunks, chunkID, raptorq.Encoder[chunkID].MinSymbols(0))
 	log.Printf("encoder for chunkID %v creation time is %v ms", chunkID, (time.Now().UnixNano()-t0)/1000000)
 	return nil
 }
@@ -283,11 +285,11 @@ func (raptorq *RaptorQImpl) constructSpecificOTI() uint32 {
 	specificOTI := make([]byte, 0)
 	specificOTI = append(specificOTI, byte(1))
 	specificOTI = append(specificOTI, 0x00, 0x01)
-	specificOTI = append(specificOTI, 0x04)
+	specificOTI = append(specificOTI, 0x01)
 	return binary.BigEndian.Uint32(specificOTI)
 }
 
-func (raptorq *RaptorQImpl) setDecoderIfNotExist(chunkID int, chunkSize uint64) error {
+func (raptorq *RaptorQImpl) setDecoderIfNotExist(chunkID int, chunkSize uint64, node *Node) error {
 	raptorq.mux.Lock()
 	defer raptorq.mux.Unlock()
 	if _, ok := raptorq.Decoder[chunkID]; ok {
@@ -304,6 +306,9 @@ func (raptorq *RaptorQImpl) setDecoderIfNotExist(chunkID int, chunkSize uint64) 
 	} else {
 		return err
 	}
+	ready := make(chan uint8)
+	raptorq.Decoder[chunkID].AddReadyBlockChan(ready)
+	go node.HandleDecodeSuccess(raptorq.rootHash, chunkID, ready)
 	return nil
 }
 
@@ -412,6 +417,7 @@ func (node *Node) Gossip(pc net.PacketConn) {
 			continue
 		}
 		raptorq := node.InitRaptorQIfNotExist(hash)
+		raptorq.senderID = int(binary.BigEndian.Uint16(copybuffer[HashSize+1 : HashSize+3]))
 		raptorq.numChunks = int(binary.BigEndian.Uint32(copybuffer[HashSize+3 : HashSize+7]))
 
 		chunkID := int(binary.BigEndian.Uint32(copybuffer[HashSize+7 : HashSize+11]))
@@ -420,7 +426,7 @@ func (node *Node) Gossip(pc net.PacketConn) {
 		symbolID := binary.BigEndian.Uint32(copybuffer[HashSize+15 : HashSize+19])
 		symbol := copybuffer[HashSize+19 : n]
 		symDebug("received", chunkID, symbolID, symbol)
-		err = raptorq.setDecoderIfNotExist(chunkID, chunkSize)
+		err = raptorq.setDecoderIfNotExist(chunkID, chunkSize, node)
 		if err != nil {
 			log.Printf("unable to set decoder for chunkID=%v, with chunkSize=%v", chunkID, chunkSize)
 			continue
@@ -438,12 +444,13 @@ func (node *Node) Gossip(pc net.PacketConn) {
 
 		if !raptorq.Decoder[chunkID].IsSourceObjectReady() {
 			raptorq.Decoder[chunkID].Decode(0, symbolID, symbol)
+			log.Printf("decode symbol %v", symbolID)
 		}
 		go node.RelayEncodedSymbol(pc, copybuffer[:n])
 	}
 }
 
-func (node *Node) HandleDecodeSuccess(hash []byte, z int, ch chan uint8) {
+func (node *Node) HandleDecodeSuccess(hash []byte, chunkID int, ch chan uint8) {
 	sbn, ok := <-ch
 	log.Printf("ready channel returned sbn=%+v ok=%+v", sbn, ok)
 	hashkey := ConvertToFixedSize(hash)
@@ -454,33 +461,16 @@ func (node *Node) HandleDecodeSuccess(hash []byte, z int, ch chan uint8) {
 	defer raptorq.mux.Unlock()
 	raptorq.numDecoded++
 	numDecoded := raptorq.numDecoded
-	go node.ResponseSuccess(hash, z)
-	log.Printf("source object is ready for block %v", z)
-	F := raptorq.Decoder[z].TransferLength()
+	go node.ResponseSuccess(hash, chunkID)
+	log.Printf("source object is ready for block %v", chunkID)
+	F := raptorq.Decoder[chunkID].TransferLength()
 	buf := make([]byte, F)
-	raptorq.Decoder[z].SourceObject(buf)
-	log.Printf("sha1 hash for block %v is %v", z, GetRootHash(buf))
+	raptorq.Decoder[chunkID].SourceObject(buf)
+	log.Printf("sha1 hash for block %v is %v", chunkID, GetRootHash(buf))
 	if numDecoded >= raptorq.numChunks {
 		raptorq.successTime = time.Now().UnixNano()
 		WriteReceivedMessage(raptorq)
-		delete(node.Cache, hashkey) // release resources after receive the file
-	}
-}
-
-func (node *Node) AddDecodingReadyChan(hash []byte) {
-	hashkey := ConvertToFixedSize(hash)
-	node.mux.Lock()
-	defer node.mux.Unlock()
-	raptorq := node.Cache[hashkey]
-	raptorq.mux.Lock()
-	defer raptorq.mux.Unlock()
-	var ready []chan uint8
-	for z := 0; z < raptorq.numChunks; z++ {
-		ready = append(ready, make(chan uint8))
-		raptorq.Decoder[z].AddReadyBlockChan(ready[z])
-	}
-	for z, _ := range ready {
-		go node.HandleDecodeSuccess(hash, z, ready[z])
+		//	delete(node.Cache, hashkey) // release resources after receive the file
 	}
 }
 
@@ -495,8 +485,6 @@ func (node *Node) InitRaptorQIfNotExist(hash []byte) *RaptorQImpl {
 		raptorq.rootHash = hash
 		raptorq.chunkSize = normalChunkSize
 		raptorq.receivedSymbols = make(map[int]map[uint32]bool)
-		raptorq.metaCommonOTI = make(map[int]uint64)
-		raptorq.metaSpecificOTI = make(map[int]uint32)
 		raptorq.initTime = time.Now().UnixNano()
 		raptorq.Decoder = make(map[int]libraptorq.Decoder)
 		node.Cache[hashkey] = &raptorq
@@ -507,13 +495,12 @@ func (node *Node) InitRaptorQIfNotExist(hash []byte) *RaptorQImpl {
 func (node *Node) HandleResponse(conn net.Conn) {
 	defer conn.Close()
 	c := bufio.NewReader(conn)
-	buf := make([]byte, HashSize)
-	n, err := io.ReadFull(c, buf)
+	hash := make([]byte, HashSize)
+	n, err := io.ReadFull(c, hash)
 	if err != nil {
 		log.Printf("response received %v size message with err %v", n, err)
 		return
 	}
-	hash := GetRootHash(buf)
 	hashkey := ConvertToFixedSize(hash)
 	//message is not sent by the node
 	if _, ok := node.SenderCache[hashkey]; !ok {
@@ -545,6 +532,7 @@ func (node *Node) HandleResponse(conn net.Conn) {
 
 // this is used for stop sender, will be replaced by consensus algorithm later
 func (node *Node) ResponseSuccess(hash []byte, chunkID int) {
+	// |hash(20)|Received(1)|chunkID(4)|peerId(4)|
 	okmsg := make([]byte, 0)
 	okmsg = append(okmsg, hash...)
 	okmsg = append(okmsg, Received)

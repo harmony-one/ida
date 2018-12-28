@@ -46,11 +46,11 @@ func main() {
 	configFile := flag.String("nbr_config", "configs/config_0.txt", "config file contains neighbor peers")
 	allPeerFile := flag.String("all_config", "configs/config_allpeers.txt", "config file contains all peer nodes info")
 	mode := flag.String("mode", "ida", "choose benchmark testing mode, [ida|unicast|p2p]")
-	t0 := flag.String("t0", "7", "initial delay time for symbol broadcasting")
-	t1 := flag.String("t1", "70", "uppper bound delay time for symbol broadcasting")
+	t0 := flag.String("t0", "5", "initial delay time for symbol broadcasting")
+	t1 := flag.String("t1", "50", "uppper bound delay time for symbol broadcasting")
 	t2 := flag.String("t2", "7", "delay time for symbol relay")
 	hop := flag.String("hop", "1", "number of hops")
-	base := flag.String("base", "1.5", "base of exponential increase of symbol broadcasting delay")
+	base := flag.String("base", "1.05", "base of exponential increase of symbol broadcasting delay")
 	flag.Parse()
 
 	if *generateConfigFiles {
