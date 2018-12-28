@@ -239,6 +239,10 @@ func (raptorq *RaptorQImpl) setEncoderIfNotExist(msg []byte, chunkID int) error 
 	piece := msg[a:b]
 	encoder, err := encf.New(piece, T, minSubSymbolSize, WS, Al)
 	log.Printf("encoder for chunkID=%v is created with size %v", chunkID, b-a)
+	log.Printf("DEBUG:****** encoder for common: %v, specific: %v", encoder.CommonOTI(), encoder.SchemeSpecificOTI())
+	log.Printf("****: N: %v", encoder.NumSubBlocks())
+	log.Printf("****: Al: %v", encoder.SymbolAlignmentParameter())
+
 	if err == nil {
 		raptorq.Encoder[chunkID] = encoder
 	} else {
@@ -292,7 +296,7 @@ func (raptorq *RaptorQImpl) setDecoderIfNotExist(chunkID int, chunkSize uint64) 
 	decf := raptorfactory.DefaultDecoderFactory()
 	commonOTI := raptorq.constructCommonOTI(chunkSize)
 	specificOTI := raptorq.constructSpecificOTI()
-	log.Printf("commonOTI: %v, specific: %v", commonOTI, specificOTI)
+	log.Printf("DEBUG******: commonOTI: %v, specific: %v", commonOTI, specificOTI)
 
 	decoder, err := decf.New(commonOTI, specificOTI)
 	if err == nil {
