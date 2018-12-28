@@ -9,22 +9,21 @@ import (
 )
 
 const (
-	Meta                 byte          = 1
-	EncodedSymbol        byte          = 2
-	Received             byte          = 3
-	SenderKey            byte          = 4
-	PubKeySize           int           = 20
-	Tau                  float32       = 0.8 // threshold rate of number of neighors decode message successfully
-	HashSize             int           = 20  // sha1 hash size
-	StopBroadCastTime    time.Duration = 100 // unit is second
-	CacheClearInterval   time.Duration = 250 // clear cache every xx seconds
-	EnforceClearInterval int64         = 300 // clear old cache eventually
-	UDPCacheSize         int           = 76 * 1024
-	MaxBlockSize         int           = 88 * 1024
+	Received             byte          = 0
+	pubKeySize           int           = 20
+	stopBroadCastTime    time.Duration = 100 // unit is second
+	cacheClearInterval   time.Duration = 250 // clear cache every xx seconds
+	enforceClearInterval int64         = 300 // clear old cache eventually
+	udpCacheSize         int           = 2 * 1024
+	normalChunkSize      int           = 100 * 1200
+	symbolSize           int           = 1200 // must be multiple of Al(=4) required by RFC6330
+
+	HashSize  int     = 20  // sha1 hash size
+	Threshold float32 = 0.8 // threshold rate of number of neighors decode message successfully
 )
 
 type Peer struct {
-	Ip      string
+	IP      string
 	TCPPort string
 	UDPPort string
 	PubKey  string
@@ -34,37 +33,40 @@ type Peer struct {
 type HashKey [HashSize]byte
 
 type Node struct {
-	//	GossipIDA
+	GossipIDA
+
 	SelfPeer           Peer
 	PeerList           []Peer
 	AllPeers           []Peer
+	InitialDelayTime   float64 // sender delay parameter
+	MaxDelayTime       float64 // sender delay parameter
+	ExpBase            float64 // sender delay parameter
+	RelayTime          float64 // gossip delay parameter
+	Hop                int
 	SenderCache        map[HashKey]bool
 	Cache              map[HashKey]*RaptorQImpl
 	PeerDecodedCounter map[HashKey]map[int]int
-	T0                 float64 // sender delay parameter
-	T1                 float64 // sender delay parameter
-	T2                 float64 // relay delay parameter
-	Base               float64 // sender delay parameter
-	Hop                int
-	mux                sync.Mutex
+
+	mux sync.Mutex
 }
 
 type RaptorQImpl struct {
-	SenderPubKey    string
-	RootHash        []byte
-	NumBlocks       int
-	MaxBlockSize    int
-	Threshold       int
-	CommonOTI       map[int]uint64
-	SpecificOTI     map[int]uint32
-	Encoder         map[int]libraptorq.Encoder
-	Decoder         map[int]libraptorq.Decoder
-	ReceivedSymbols map[int]map[uint32]bool
-	NumDecoded      int
-	InitTime        int64 //instance initiate time
-	SuccessTime     int64 //success decode time, UnixNano time
+	Encoder map[int]libraptorq.Encoder
+	Decoder map[int]libraptorq.Decoder
+
+	senderID        int
+	rootHash        []byte
+	numChunks       int
+	chunkSize       int
+	threshold       int
+	metaCommonOTI   map[int]uint64
+	metaSpecificOTI map[int]uint32
+	receivedSymbols map[int]map[uint32]bool
+	numDecoded      int
+	initTime        int64 //instance initiate time
+	successTime     int64 //success decode time, UnixNano time
 	mux             sync.Mutex
-	Stats           map[int]float64 // for benchmark purpose
+	stats           map[int]float64 // for benchmark purpose
 }
 
 // IDA broadcast using RaptorQ interface

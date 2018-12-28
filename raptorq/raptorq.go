@@ -15,7 +15,6 @@ import (
 	"math/rand"
 	"net"
 	"strconv"
-	"sync"
 	"time"
 )
 
@@ -39,57 +38,38 @@ func (node *Node) ListeningOnBroadCast(pc net.PacketConn) {
 		}
 		clientinfo := conn.RemoteAddr().String()
 		log.Printf("accept connection from %s", clientinfo)
-		go node.HandleMetaData(conn)
+		go node.HandleResponse(conn)
 	}
-
 }
 
 func (node *Node) BroadCast(msg []byte, pc net.PacketConn) (map[int]interface{}, *RaptorQImpl) {
 	raptorq := RaptorQImpl{}
-	raptorq.Threshold = int(Tau * float32(len(node.AllPeers)))
-	log.Printf("threshold value is %v", raptorq.Threshold)
-	raptorq.SenderPubKey = node.SelfPeer.PubKey
-	raptorq.RootHash = GetRootHash(msg)
+	raptorq.threshold = int(Threshold * float32(len(node.AllPeers)))
+	log.Printf("threshold value is %v", raptorq.threshold)
+	raptorq.senderID = node.SelfPeer.Sid
+	raptorq.rootHash = GetRootHash(msg)
 	raptorq.Encoder = make(map[int]libraptorq.Encoder)
-	raptorq.Stats = make(map[int]float64)
-	raptorq.MaxBlockSize = MaxBlockSize
-	err := raptorq.SetEncoder(msg)
-	log.Printf("encoder created")
-	if err != nil {
-		log.Printf("cannot create raptorq encoder")
-		return nil, nil
-	}
+	raptorq.stats = make(map[int]float64)
+	raptorq.chunkSize = normalChunkSize
 
-	hashkey := ConvertToFixedSize(raptorq.RootHash)
+	hashkey := ConvertToFixedSize(raptorq.rootHash)
 	node.SenderCache[hashkey] = true
 
-	var wg sync.WaitGroup
-	for _, peer := range node.AllPeers {
-		// send metadata
-		if node.SelfPeer.PubKey == peer.PubKey {
-			continue
-		}
-		tcpaddr := net.JoinHostPort(peer.Ip, peer.TCPPort)
-		conn, err := net.Dial("tcp", tcpaddr)
-		if err != nil {
-			log.Printf("cannot connect to peer %v:%v", peer.Ip, peer.TCPPort)
-			continue
-		}
-		log.Printf("connection established to peer %s", tcpaddr)
-		timeoutDuration := 2 * time.Second
-		conn.SetWriteDeadline(time.Now().Add(timeoutDuration))
-
-		wg.Add(1)
-		go SendMetaData(&raptorq, conn, &wg)
+	F := len(msg)
+	B := raptorq.chunkSize
+	if F <= B {
+		raptorq.numChunks = 1
+	} else if F%B == 0 {
+		raptorq.numChunks = F / B
+	} else {
+		raptorq.numChunks = F/B + 1
 	}
-	wg.Wait()
 
-	raptorq.InitTime = time.Now().UnixNano()
 	cancels := make(map[int]interface{})
-	for z := 0; z < raptorq.NumBlocks; z++ {
+	for z := 0; z < raptorq.numChunks; z++ {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancels[z] = cancel
-		go node.BroadCastEncodedSymbol(ctx, &raptorq, pc, z)
+		go node.BroadCastEncodedSymbol(ctx, msg, &raptorq, pc, z)
 	}
 	return cancels, &raptorq
 }
@@ -119,29 +99,29 @@ func (node *Node) StopBroadCast(cancels map[int]interface{}, raptorq *RaptorQImp
 	//stop := make(chan bool)
 	//go node.ReportUnfinishedBlocks(raptorq, stop)
 
-	hashkey := ConvertToFixedSize(raptorq.RootHash)
+	hashkey := ConvertToFixedSize(raptorq.rootHash)
 	canceled := make(map[int]bool)
-	for start := time.Now(); time.Since(start) < StopBroadCastTime*time.Second; {
-		for z := 0; z < raptorq.NumBlocks; z++ {
+	for start := time.Now(); time.Since(start) < stopBroadCastTime*time.Second; {
+		for z := 0; z < raptorq.numChunks; z++ {
 			if canceled[z] {
 				continue
 			}
-			if node.PeerDecodedCounter[hashkey][z] >= raptorq.Threshold {
-				delta := float64(time.Now().UnixNano()-raptorq.InitTime) / 1000000
+			if node.PeerDecodedCounter[hashkey][z] >= raptorq.threshold {
+				delta := float64(time.Now().UnixNano()-raptorq.initTime) / 1000000
 				raptorq.mux.Lock()
-				raptorq.Stats[z] = delta
+				raptorq.stats[z] = delta
 				raptorq.mux.Unlock()
 				cancels[z].(context.CancelFunc)()
 				canceled[z] = true
 			}
 		}
-		if len(canceled) >= raptorq.NumBlocks {
+		if len(canceled) >= raptorq.numChunks {
 			//stop <- true
-			log.Printf("t0/t1/base/t2/hop: %v ms, %v ms, %v, %v ms, %v", node.T0, node.T1, node.Base, node.T2, node.Hop)
-			for z, delta := range raptorq.Stats {
+			log.Printf("t0/t1/base/t2/hop: %v ms, %v ms, %v, %v ms, %v", node.InitialDelayTime, node.MaxDelayTime, node.ExpBase, node.RelayTime, node.Hop)
+			for z, delta := range raptorq.stats {
 				log.Printf("block %v broadcast finished with time elapse = %v ms", z, delta)
 			}
-			log.Printf("totol broadcast time: %v ms", float64(time.Now().UnixNano()-raptorq.InitTime)/1000000)
+			log.Printf("totol broadcast time: %v ms", float64(time.Now().UnixNano()-raptorq.initTime)/1000000)
 			return
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -160,15 +140,15 @@ func (node *Node) ClearCache() {
 	for {
 		locked = false
 		node.mux.Unlock()
-		time.Sleep(CacheClearInterval * time.Second)
+		time.Sleep(cacheClearInterval * time.Second)
 		locked = true
 		node.mux.Lock()
 		currentTime := time.Now().UnixNano()
 		for k, v := range node.Cache {
-			if v.SuccessTime > 0 && currentTime-v.SuccessTime > int64(CacheClearInterval)*OneSec {
+			if v.successTime > 0 && currentTime-v.successTime > int64(cacheClearInterval)*OneSec {
 				delete(node.Cache, k)
 				log.Printf("file hash %v cache deleted", k)
-			} else if currentTime-v.InitTime > EnforceClearInterval*OneSec {
+			} else if currentTime-v.initTime > enforceClearInterval*OneSec {
 				delete(node.Cache, k)
 				log.Printf("file hash %v cache eventually deleted", k)
 			}
@@ -188,33 +168,6 @@ func ConvertToFixedSize(buf []byte) [HashSize]byte {
 	return arr
 }
 
-func (raptorq *RaptorQImpl) ConstructMetaData() []byte {
-	// TODO: optimize overhead of oti later
-	packet := append(raptorq.RootHash, Meta)
-	pubkey, err := hex.DecodeString(raptorq.SenderPubKey)
-	packet = append(packet, pubkey...)
-	Z := make([]byte, 4)
-	binary.BigEndian.PutUint32(Z, uint32(raptorq.NumBlocks))
-	packet = append(packet, Z...)
-	var a, b int
-	if raptorq.NumBlocks > 1 {
-		a = raptorq.NumBlocks - 2
-		b = raptorq.NumBlocks - 1
-	}
-	for i := a; i <= b; i++ {
-		commonoti := make([]byte, 8)
-		binary.BigEndian.PutUint64(commonoti, raptorq.Encoder[i].CommonOTI())
-		specificoti := make([]byte, 4)
-		binary.BigEndian.PutUint32(specificoti, raptorq.Encoder[i].SchemeSpecificOTI())
-		if err != nil {
-			log.Fatal("cannot convert pubkey to byte array")
-		}
-		packet = append(packet, commonoti...)
-		packet = append(packet, specificoti...)
-	}
-	return packet
-}
-
 func symDebug(prefix string, z int, esi uint32, symbol []byte) {
 	symhash := sha1.Sum(symbol)
 	symhh := make([]byte, hex.EncodedLen(len(symhash)))
@@ -222,161 +175,187 @@ func symDebug(prefix string, z int, esi uint32, symbol []byte) {
 	log.Printf("%s: z=%+v esi=%+v len=%v symhh=%s", prefix, z, esi, len(symbol), symhh)
 }
 
-func (raptorq *RaptorQImpl) ConstructSymbolPack(z int, esi uint32, hop int) ([]byte, error) {
-	T := raptorq.Encoder[z].SymbolSize()
+func (raptorq *RaptorQImpl) constructSymbolPacket(msg []byte, chunkID int, symbolID uint32, hop int) ([]byte, error) {
+	// |HashSize(20)|hop(1)|senderID(2)|numChunks(4)|chunkID(4)|chunkSize(4)|symbolID(4)|symbol(1200)|
+	T := raptorq.Encoder[chunkID].SymbolSize()
 	symbol := make([]byte, int(T))
-	_, err := raptorq.Encoder[z].Encode(0, esi, symbol)
+	_, err := raptorq.Encoder[chunkID].Encode(0, symbolID, symbol)
 	if err != nil {
 		return nil, err
 	}
-	symDebug("encoded", z, esi, symbol)
+	symDebug("encoded", chunkID, symbolID, symbol)
 	packet := make([]byte, 0)
-	packet = append(packet, raptorq.RootHash...)
+	packet = append(packet, raptorq.rootHash...)
+
 	packet = append(packet, byte(hop))
-	Z := make([]byte, 4)
-	binary.BigEndian.PutUint32(Z, uint32(z))
-	packet = append(packet, Z...)
-	esiheader := make([]byte, 4)
-	binary.BigEndian.PutUint32(esiheader, esi)
-	packet = append(packet, esiheader...)
+
+	sender_id := make([]byte, 2)
+	binary.BigEndian.PutUint16(sender_id, uint16(raptorq.senderID))
+	packet = append(packet, sender_id...)
+
+	num_chunks := make([]byte, 4)
+	binary.BigEndian.PutUint32(num_chunks, uint32(raptorq.numChunks))
+	packet = append(packet, num_chunks...)
+
+	chunk_id := make([]byte, 4)
+	binary.BigEndian.PutUint32(chunk_id, uint32(chunkID))
+	packet = append(packet, chunk_id...)
+
+	chunkSize := raptorq.getChunkSize(msg, chunkID)
+	chunk_size := make([]byte, 4)
+	binary.BigEndian.PutUint32(chunk_size, uint32(chunkSize))
+	packet = append(packet, chunk_size...)
+
+	symbol_id := make([]byte, 4)
+	binary.BigEndian.PutUint32(symbol_id, symbolID)
+	packet = append(packet, symbol_id...)
 	packet = append(packet, symbol...)
+
 	return packet, nil
 }
 
 // Specification of RaptorQ FEC is defined in RFC6330
-func (raptorq *RaptorQImpl) SetEncoder(msg []byte) error {
-	encf := raptorfactory.DefaultEncoderFactory()
+// return the TransferLength/ChunkSize
+func (raptorq *RaptorQImpl) setEncoderIfNotExist(msg []byte, chunkID int) error {
+	if _, ok := raptorq.Encoder[chunkID]; ok {
+		return nil
+	}
 
+	encf := raptorfactory.DefaultEncoderFactory()
 	// each source block, the size is limit to a 40 bit integer 946270874880 = 881.28 GB
 	//there are some hidden restrictions: WS/T >=10
 	// Al: symbol alignment parameter
 	var Al uint8 = 4
 	// T: symbol size, can take it to be maximum payload size, multiple of Al
-	var T uint16 = 1024
-	// WS: working memory, maxSubBlockSize, assume it to be 8KB
-	var WS uint32 = 32 * 1024
+	var T uint16 = uint16(symbolSize)
+	// WS: working memory, maxSubBlockSize
+	var WS uint32 = 2 * uint32(normalChunkSize)
 	// minimum sub-symbol size is SS, must be a multiple of Al
-	var minSubSymbolSize uint16 = 1 //T / uint16(Al)
+	var minSubSymbolSize uint16 = T // then N=1
 
-	F := len(msg)
-	B := raptorq.MaxBlockSize
-	if F <= B {
-		raptorq.NumBlocks = 1
-	} else if F%B == 0 {
-		raptorq.NumBlocks = F / B
+	t0 := time.Now().UnixNano()
+	a := chunkID * normalChunkSize
+	b := a + raptorq.getChunkSize(msg, chunkID)
+	piece := msg[a:b]
+	encoder, err := encf.New(piece, T, minSubSymbolSize, WS, Al)
+	log.Printf("encoder for chunkID=%v is created with size %v", chunkID, b-a)
+	if err == nil {
+		raptorq.Encoder[chunkID] = encoder
 	} else {
-		raptorq.NumBlocks = F/B + 1
+		return err
 	}
-
-	for i := 0; i < raptorq.NumBlocks; i++ {
-		a := i * B
-		b := (i + 1) * B
-		if i == raptorq.NumBlocks-1 {
-			b = F
-		}
-		piece := msg[a:b]
-		log.Printf("sha1 hash of block %v is %v", i, GetRootHash(piece))
-		encoder, err := encf.New(piece, T, minSubSymbolSize, WS, Al)
-		log.Printf("encoder %v is created with size %v", i, b-a)
-		if err == nil {
-			raptorq.Encoder[i] = encoder
-		} else {
-			return err
-		}
-	}
-	log.Printf("number of blocks = %v, K0=%v", raptorq.NumBlocks, raptorq.Encoder[0].MinSymbols(0))
-	log.Printf("encoder creation time is %v ms", (time.Now().UnixNano()-raptorq.InitTime)/1000000)
+	log.Printf("numChunks=%v, chunkID=%v, numMinSymbols=%v", raptorq.numChunks, chunkID, raptorq.Encoder[0].MinSymbols(0))
+	log.Printf("encoder for chunkID %v creation time is %v ms", chunkID, (time.Now().UnixNano()-t0)/1000000)
 	return nil
 }
 
-func (raptorq *RaptorQImpl) SetDecoder() error {
-	var idx int
-	decf := raptorfactory.DefaultDecoderFactory()
-	if raptorq.NumBlocks == 1 {
-		decoder, err := decf.New(raptorq.CommonOTI[0], raptorq.SpecificOTI[0])
-		if err == nil {
-			raptorq.Decoder[0] = decoder
-		} else {
-			return err
-		}
+func (raptorq *RaptorQImpl) getChunkSize(msg []byte, chunkID int) int {
+	a := chunkID * normalChunkSize
+	b := (chunkID + 1) * normalChunkSize
+	if chunkID == raptorq.numChunks-1 {
+		b = len(msg)
+	}
+	return b - a
+}
+
+func (raptorq *RaptorQImpl) constructCommonOTI(transferLength uint64) uint64 {
+	// CommonOTI = |Transfer Length (5)|Reserved(1)|Symbol Size(2)| 8 bytes
+	commonOTI := make([]byte, 0)
+
+	transfer_length := make([]byte, 8)
+	binary.BigEndian.PutUint64(transfer_length, transferLength)
+	commonOTI = append(commonOTI, transfer_length[3:8]...)
+	commonOTI = append(commonOTI, byte(0))
+
+	symbol_size := make([]byte, 2)
+	binary.BigEndian.PutUint16(symbol_size, uint16(symbolSize))
+	commonOTI = append(commonOTI, symbol_size...)
+
+	return binary.BigEndian.Uint64(commonOTI)
+}
+
+func (raptorq *RaptorQImpl) constructSpecificOTI() uint32 {
+	// SpecificOTI = |Z(1)|N(2)|Al(1)| 4 bytes
+	specificOTI := make([]byte, 0)
+	specificOTI = append(specificOTI, byte(1))
+	specificOTI = append(specificOTI, 0x00, 0x01)
+	specificOTI = append(specificOTI, 0x04)
+	return binary.BigEndian.Uint32(specificOTI)
+}
+
+func (raptorq *RaptorQImpl) setDecoderIfNotExist(chunkID int, chunkSize uint64) error {
+	raptorq.mux.Lock()
+	defer raptorq.mux.Unlock()
+	if _, ok := raptorq.Decoder[chunkID]; ok {
 		return nil
 	}
+	decf := raptorfactory.DefaultDecoderFactory()
+	commonOTI := raptorq.constructCommonOTI(chunkSize)
+	specificOTI := raptorq.constructSpecificOTI()
+	log.Printf("commonOTI: %v, specific: %v", commonOTI, specificOTI)
 
-	for i := 0; i < raptorq.NumBlocks; i++ {
-		if i < raptorq.NumBlocks-1 {
-			idx = 0
-		} else {
-			idx = 1
-		}
-		decoder, err := decf.New(raptorq.CommonOTI[idx], raptorq.SpecificOTI[idx])
-		if err == nil {
-			raptorq.Decoder[i] = decoder
-		} else {
-			return err
-		}
+	decoder, err := decf.New(commonOTI, specificOTI)
+	if err == nil {
+		raptorq.Decoder[chunkID] = decoder
+	} else {
+		return err
 	}
 	return nil
 }
 
-func SendMetaData(raptorq *RaptorQImpl, conn net.Conn, wg *sync.WaitGroup) {
-	defer conn.Close()
-	defer wg.Done()
-	metadata := raptorq.ConstructMetaData()
-	_, err := conn.Write(metadata)
-	if err != nil {
-		log.Printf("send metadata failed at peer %v with error %s", conn.RemoteAddr(), err)
-		return
-	}
-	log.Printf("metadata send to %v", conn.RemoteAddr())
-}
-
-func ExpBackoffDelay(t0 float64, t1 float64, base float64) func(int, int) time.Duration {
-	// t0,t1 is in milliseconds
-	max_k := math.Log2(t1/t0) / math.Log2(base) //result cap by t1
+func expBackoffDelay(initialDelayTime float64, maxDelayTime float64, expBase float64) func(int, int) time.Duration {
+	// delay time unit is milliseconds
+	max_k := math.Log2(maxDelayTime/initialDelayTime) / math.Log2(expBase) //result cap by maxDelayTime
 	return func(k int, k0 int) time.Duration {
 		delta := float64(k - k0)
 		power := math.Max(delta, 0)
 		power = math.Min(power, max_k)
-		return time.Duration(1000000 * t0 * math.Pow(base, power))
+		return time.Duration(1000000 * initialDelayTime * math.Pow(expBase, power))
 	}
 }
 
-func (node *Node) BroadCastEncodedSymbol(ctx context.Context, raptorq *RaptorQImpl, pc net.PacketConn, z int) {
-	var esi uint32
+func (node *Node) BroadCastEncodedSymbol(ctx context.Context, msg []byte, raptorq *RaptorQImpl, pc net.PacketConn, chunkID int) {
+	var symbolID uint32
 	peerList := node.PeerList
-	L := len(peerList)
-	var n int
-	backoff := ExpBackoffDelay(node.T0, node.T1, node.Base)
-	k0 := int(raptorq.Encoder[z].MinSymbols(0))
+	var bytes_sent int
+	backoff := expBackoffDelay(node.InitialDelayTime, node.MaxDelayTime, node.ExpBase)
+	err := raptorq.setEncoderIfNotExist(msg, chunkID)
+	if err != nil {
+		log.Printf("unable to create encoder for chunkID=%v", chunkID)
+	}
+	k0 := int(raptorq.Encoder[chunkID].MinSymbols(0))
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("block %v broadcast stopped", z)
+			log.Printf("chunkID=%v broadcast stopped", chunkID)
 			return
 		default:
-			k := int(esi)
+			k := int(symbolID)
 			time.Sleep(backoff(k, k0))
 
-			symbol, err := raptorq.ConstructSymbolPack(z, esi, node.Hop)
+			packet, err := raptorq.constructSymbolPacket(msg, chunkID, symbolID, node.Hop)
 			if err != nil {
 				log.Printf("raptorq encoding error: %s", err)
 				return //chao: return or continue
 			}
-			idx := int(esi) % L
-			remoteAddr := net.JoinHostPort(peerList[idx].Ip, peerList[idx].UDPPort)
+			idx := int(symbolID) % len(peerList)
+			remoteAddr := net.JoinHostPort(peerList[idx].IP, peerList[idx].UDPPort)
 			addr, err := net.ResolveUDPAddr("udp", remoteAddr)
 			if err != nil {
 				log.Printf("cannot resolve udp address %v", remoteAddr)
 			}
-			n, err = pc.WriteTo(symbol, addr)
+			bytes_sent, err = pc.WriteTo(packet, addr)
 			if err != nil {
-				log.Printf("broadcast encoded symbol written error %v with %v symbol written", err, n)
+				log.Printf("broadcast encoded symbol written error %v with %v symbol written", err, bytes_sent)
 			}
-			if esi%100 == 0 {
-				log.Printf("block %v symbol %v sent to %v", z, esi, remoteAddr)
+			if err == nil && bytes_sent < len(packet) {
+				log.Printf("udp write with only %v bytes, with original %v bytes", bytes_sent, len(packet))
+			}
+			if symbolID%100 == 0 {
+				log.Printf("chunkID=%v,  symbolID=%v sent to %v", chunkID, symbolID, remoteAddr)
 			}
 		}
-		esi++
+		symbolID++
 	}
 }
 
@@ -388,36 +367,36 @@ func (node *Node) RelayEncodedSymbol(pc net.PacketConn, packet []byte) {
 		packet[HashSize] = packet[HashSize] - 1
 	}
 
-	L := len(node.PeerList)
-	idx0 := rand.Intn(L)
+	idx0 := rand.Intn(len(node.PeerList))
 	for i, _ := range node.PeerList {
-		idx := (i + idx0) % L
+		idx := (i + idx0) % len(node.PeerList)
 		peer := node.PeerList[idx]
-		remoteAddr := net.JoinHostPort(peer.Ip, peer.UDPPort)
+		remoteAddr := net.JoinHostPort(peer.IP, peer.UDPPort)
 		addr, err := net.ResolveUDPAddr("udp", remoteAddr)
 		if err != nil {
 			log.Printf("cannot resolve udp address %v", remoteAddr)
 		}
-		//	esi := binary.BigEndian.Uint32(packet[HashSize+1 : HashSize+5])
-		//log.Printf("relay symbol %v to %v", esi, addr)
-		time.Sleep(time.Duration(node.T2 * 1000000))
+		time.Sleep(time.Duration(node.RelayTime * 1000000))
 		n, err := pc.WriteTo(packet, addr)
 		if err != nil {
 			log.Printf("relay symbol failed at %v with %v bytes written", addr, n)
+		}
+		if err == nil && n < len(packet) {
+			log.Printf("relay symbol write only %v bytes, need write %v bytes", n, len(packet))
 		}
 	}
 }
 
 func (node *Node) Gossip(pc net.PacketConn) {
-	var buffer []byte = make([]byte, UDPCacheSize)
+	var buffer []byte = make([]byte, udpCacheSize)
 	for {
 		n, addr, err := pc.ReadFrom(buffer)
 		if err != nil {
 			log.Printf("gossip receive response from peer %v with error %s", addr, err)
 			continue
-		} else if n < HashSize+9 {
-			log.Printf("gossip need received at least %d byte from peer %v", HashSize+9, addr)
-			continue
+		}
+		if n < HashSize+19+symbolSize {
+			log.Printf("gossip received only %v symbols, need %v symbols", n, HashSize+19+symbolSize)
 		}
 		copybuffer := make([]byte, n)
 		copy(copybuffer, buffer[:n])
@@ -429,31 +408,32 @@ func (node *Node) Gossip(pc net.PacketConn) {
 			continue
 		}
 		raptorq := node.InitRaptorQIfNotExist(hash)
+		raptorq.numChunks = int(binary.BigEndian.Uint32(copybuffer[HashSize+3 : HashSize+7]))
 
-		z := int(binary.BigEndian.Uint32(copybuffer[HashSize+1 : HashSize+5]))
-		esi := binary.BigEndian.Uint32(copybuffer[HashSize+5 : HashSize+9])
-		symbol := copybuffer[HashSize+9 : n]
-		symDebug("received", z, esi, symbol)
+		chunkID := int(binary.BigEndian.Uint32(copybuffer[HashSize+7 : HashSize+11]))
+		chunk_size := append(make([]byte, 4), copybuffer[HashSize+11:HashSize+15]...)
+		chunkSize := binary.BigEndian.Uint64(chunk_size)
+		symbolID := binary.BigEndian.Uint32(copybuffer[HashSize+15 : HashSize+19])
+		symbol := copybuffer[HashSize+19 : n]
+		symDebug("received", chunkID, symbolID, symbol)
+		err = raptorq.setDecoderIfNotExist(chunkID, chunkSize)
+		if err != nil {
+			log.Printf("unable to set decoder for chunkID=%v, with chunkSize=%v", chunkID, chunkSize)
+			continue
+		}
 
-		if _, ok := raptorq.ReceivedSymbols[z]; !ok {
-			raptorq.ReceivedSymbols[z] = make(map[uint32]bool)
+		if _, ok := raptorq.receivedSymbols[chunkID]; !ok {
+			raptorq.receivedSymbols[chunkID] = make(map[uint32]bool)
 		}
 
 		// just relay once
-		if raptorq.ReceivedSymbols[z][esi] {
+		if raptorq.receivedSymbols[chunkID][symbolID] {
 			continue
 		}
-		raptorq.ReceivedSymbols[z][esi] = true
-		//		if len(raptorq.ReceivedSymbols[z])%50 == 0 && !raptorq.Decoder[z].IsSourceObjectReady() {
-		//			log.Printf("node %v received source block %v , %v symbols, latest symbol esi = %v", node.SelfPeer.Sid, z, len(raptorq.ReceivedSymbols[z]), esi)
-		//		}
-		if _, ok := raptorq.Decoder[z]; !ok {
-			log.Printf("symbol esi %v skipped because decoder not exist for block %v", esi, z)
-			continue
-		}
+		raptorq.receivedSymbols[chunkID][symbolID] = true
 
-		if !raptorq.Decoder[z].IsSourceObjectReady() {
-			raptorq.Decoder[z].Decode(0, esi, symbol)
+		if !raptorq.Decoder[chunkID].IsSourceObjectReady() {
+			raptorq.Decoder[chunkID].Decode(0, symbolID, symbol)
 		}
 		go node.RelayEncodedSymbol(pc, copybuffer[:n])
 	}
@@ -468,17 +448,18 @@ func (node *Node) HandleDecodeSuccess(hash []byte, z int, ch chan uint8) {
 	raptorq := node.Cache[hashkey]
 	raptorq.mux.Lock()
 	defer raptorq.mux.Unlock()
-	raptorq.NumDecoded++
-	numDecoded := raptorq.NumDecoded
+	raptorq.numDecoded++
+	numDecoded := raptorq.numDecoded
 	go node.ResponseSuccess(hash, z)
 	log.Printf("source object is ready for block %v", z)
 	F := raptorq.Decoder[z].TransferLength()
 	buf := make([]byte, F)
 	raptorq.Decoder[z].SourceObject(buf)
 	log.Printf("sha1 hash for block %v is %v", z, GetRootHash(buf))
-	if numDecoded >= raptorq.NumBlocks {
-		raptorq.SuccessTime = time.Now().UnixNano()
-		go WriteReceivedMessage(raptorq)
+	if numDecoded >= raptorq.numChunks {
+		raptorq.successTime = time.Now().UnixNano()
+		WriteReceivedMessage(raptorq)
+		delete(node.Cache, hashkey) // release resources after receive the file
 	}
 }
 
@@ -489,9 +470,8 @@ func (node *Node) AddDecodingReadyChan(hash []byte) {
 	raptorq := node.Cache[hashkey]
 	raptorq.mux.Lock()
 	defer raptorq.mux.Unlock()
-	Z := raptorq.NumBlocks
 	var ready []chan uint8
-	for z := 0; z < Z; z++ {
+	for z := 0; z < raptorq.numChunks; z++ {
 		ready = append(ready, make(chan uint8))
 		raptorq.Decoder[z].AddReadyBlockChan(ready[z])
 	}
@@ -501,122 +481,72 @@ func (node *Node) AddDecodingReadyChan(hash []byte) {
 }
 
 func (node *Node) InitRaptorQIfNotExist(hash []byte) *RaptorQImpl {
-	//hashkey := hex.EncodeToString(hash)
 	hashkey := ConvertToFixedSize(hash)
 	node.mux.Lock()
 	defer node.mux.Unlock()
 	if node.Cache[hashkey] == nil {
 		log.Printf("raptorq initialized with hash %v", hashkey)
 		raptorq := RaptorQImpl{}
-		raptorq.Threshold = int(Tau * float32(len(node.AllPeers)))
-		raptorq.RootHash = hash
-		raptorq.MaxBlockSize = MaxBlockSize
-		raptorq.ReceivedSymbols = make(map[int]map[uint32]bool)
+		raptorq.threshold = int(Threshold * float32(len(node.AllPeers)))
+		raptorq.rootHash = hash
+		raptorq.chunkSize = normalChunkSize
+		raptorq.receivedSymbols = make(map[int]map[uint32]bool)
+		raptorq.metaCommonOTI = make(map[int]uint64)
+		raptorq.metaSpecificOTI = make(map[int]uint32)
+		raptorq.initTime = time.Now().UnixNano()
 		raptorq.Decoder = make(map[int]libraptorq.Decoder)
-		raptorq.CommonOTI = make(map[int]uint64)
-		raptorq.SpecificOTI = make(map[int]uint32)
-		raptorq.InitTime = time.Now().UnixNano()
 		node.Cache[hashkey] = &raptorq
 	}
 	return node.Cache[hashkey]
 }
 
-func (node *Node) HandleMetaData(conn net.Conn) {
-	var hash []byte
+func (node *Node) HandleResponse(conn net.Conn) {
 	defer conn.Close()
 	c := bufio.NewReader(conn)
 	buf := make([]byte, HashSize)
 	n, err := io.ReadFull(c, buf)
-	if err != nil { // why this happens
-		log.Printf("metadata received %v size message", n)
-		log.Printf("metadata unable to get root hash of the message: %v", err)
+	if err != nil {
+		log.Printf("response received %v size message with err %v", n, err)
 		return
 	}
-	raptorq := node.InitRaptorQIfNotExist(buf)
-	hash = raptorq.RootHash // repeated here
+	hash := GetRootHash(buf)
+	hashkey := ConvertToFixedSize(hash)
+	//message is not sent by the node
+	if _, ok := node.SenderCache[hashkey]; !ok {
+		return
+	}
 	mtype, _ := c.ReadByte()
 	switch mtype {
-	case Meta:
-		enoughBytes := make([]byte, PubKeySize)
-		var n int
-		n, err = io.ReadFull(c, enoughBytes)
-		if err != nil {
-			log.Printf("pubkey read error")
-			return
-		}
-		raptorq.SenderPubKey = hex.EncodeToString(enoughBytes[:n])
-
-		Z := make([]byte, 4)
-		_, err := io.ReadFull(c, Z)
-		if err != nil {
-			log.Printf("number of blocks decoding error")
-		}
-		raptorq.NumBlocks = int(binary.BigEndian.Uint32(Z))
-		var b int
-		if raptorq.NumBlocks > 1 {
-			b = 1
-		}
-		for i := 0; i <= b; i++ {
-
-			eightBytes := make([]byte, 8)
-			_, err := io.ReadFull(c, eightBytes)
-			if err != nil {
-				log.Printf("common oti read error")
-				return
-			}
-			raptorq.CommonOTI[i] = binary.BigEndian.Uint64(eightBytes)
-
-			fourBytes := make([]byte, 4)
-			_, err = io.ReadFull(c, fourBytes)
-			if err != nil {
-				log.Printf("schemespecific oti read error")
-				return
-			}
-			raptorq.SpecificOTI[i] = binary.BigEndian.Uint32(fourBytes)
-		}
-		err = raptorq.SetDecoder()
-		if err != nil {
-			log.Printf("unable to set decoders for raptorq")
-		}
-		hashkey := ConvertToFixedSize(hash)
-		node.mux.Lock()
-		defer node.mux.Unlock()
-		node.Cache[hashkey] = raptorq
-		go node.AddDecodingReadyChan(hash)
-		log.Printf("metadata received, raptorq ready")
 	case Received:
-		hashkey := ConvertToFixedSize(hash)
-		Z := make([]byte, 4)
-		_, err := io.ReadFull(c, Z)
-		z := int(binary.BigEndian.Uint32(Z))
+		chunk_id := make([]byte, 4)
+		_, err := io.ReadFull(c, chunk_id)
+		chunkID := int(binary.BigEndian.Uint32(chunk_id))
 		node.mux.Lock()
 		if _, ok := node.PeerDecodedCounter[hashkey]; !ok {
 			node.PeerDecodedCounter[hashkey] = make(map[int]int)
 		}
-		node.PeerDecodedCounter[hashkey][z] = node.PeerDecodedCounter[hashkey][z] + 1
+		node.PeerDecodedCounter[hashkey][chunkID] = node.PeerDecodedCounter[hashkey][chunkID] + 1
 		node.mux.Unlock()
 		sid := make([]byte, 4)
 		_, err = io.ReadFull(c, sid)
 		if err != nil {
 			log.Printf("node sid read error")
 		}
-		log.Printf("block %v decoded confirmation received from %v", z, binary.BigEndian.Uint32(sid))
-		//TODO: add received timestamp for latency estimate
+		log.Printf("chunkID=%v decoded confirmation received from %v", chunkID, binary.BigEndian.Uint32(sid))
 		return
 	default:
-		log.Printf("unknown meta data type")
-
+		log.Printf("tcp received unknown data type")
 	}
 }
 
 // this is used for stop sender, will be replaced by consensus algorithm later
-func (node *Node) ResponseSuccess(hash []byte, z int) {
+func (node *Node) ResponseSuccess(hash []byte, chunkID int) {
 	okmsg := make([]byte, 0)
 	okmsg = append(okmsg, hash...)
 	okmsg = append(okmsg, Received)
-	Z := make([]byte, 4)
-	binary.BigEndian.PutUint32(Z, uint32(z))
-	okmsg = append(okmsg, Z...)
+	chunk_id := make([]byte, 4)
+	binary.BigEndian.PutUint32(chunk_id, uint32(chunkID))
+	okmsg = append(okmsg, chunk_id...)
 	sid := make([]byte, 4)
 	binary.BigEndian.PutUint32(sid, uint32(node.SelfPeer.Sid))
 	okmsg = append(okmsg, sid...)
@@ -624,16 +554,15 @@ func (node *Node) ResponseSuccess(hash []byte, z int) {
 	node.mux.Lock()
 	raptorq := node.Cache[hashkey]
 	node.mux.Unlock()
-	senderPubKey := raptorq.SenderPubKey
 	for _, peer := range node.AllPeers {
-		if peer.PubKey != senderPubKey {
+		if peer.Sid != raptorq.senderID {
 			continue
 		}
-		tcpaddr := net.JoinHostPort(peer.Ip, peer.TCPPort)
+		tcpaddr := net.JoinHostPort(peer.IP, peer.TCPPort)
 		conn, err := net.Dial("tcp", tcpaddr)
 		if err != nil {
 			log.Printf("dial to tcp addr %v failed with %v", tcpaddr, err)
-			backoff := ExpBackoffDelay(1000, 15000, 1.35)
+			backoff := expBackoffDelay(1000, 15000, 1.35)
 			for i := 0; i < 10; i++ {
 				time.Sleep(backoff(i, 0))
 				conn, err = net.Dial("tcp", tcpaddr)
@@ -646,7 +575,7 @@ func (node *Node) ResponseSuccess(hash []byte, z int) {
 		}
 		if err == nil && conn != nil {
 			_, err = conn.Write(okmsg)
-			log.Printf("node %v send okay message for block %v to sender %v", node.SelfPeer.Sid, z, tcpaddr)
+			log.Printf("node %v send okay message for chunkID=%v to sender %v", node.SelfPeer.Sid, chunkID, tcpaddr)
 			if err != nil {
 				log.Printf("send received message to sender %v failed with %v", tcpaddr, err)
 			}
@@ -656,26 +585,26 @@ func (node *Node) ResponseSuccess(hash []byte, z int) {
 }
 
 func WriteReceivedMessage(raptorq *RaptorQImpl) {
-	if raptorq.NumDecoded < raptorq.NumBlocks {
+	if raptorq.numDecoded < raptorq.numChunks {
 		log.Printf("source object is not ready")
 		return
 	}
 	var F int
-	for i := 0; i < raptorq.NumBlocks; i++ {
+	for i := 0; i < raptorq.numChunks; i++ {
 		F += int(raptorq.Decoder[i].TransferLength())
 	}
 	log.Printf("writing decoded source file with %v bytes......", F)
 	buf := make([]byte, F)
 	var offset int
-	for i := 0; i < raptorq.NumBlocks; i++ {
+	for i := 0; i < raptorq.numChunks; i++ {
 		size := int(raptorq.Decoder[i].TransferLength())
 		_, err := raptorq.Decoder[i].SourceObject(buf[offset : offset+size])
 		if err != nil {
-			log.Printf("decode object failed at block %v with blocksize %v", i, size)
+			log.Printf("decode object failed at chunkID=%v with chunkSize=%v", i, size)
 			return
 		}
 		offset += size
 	}
-	fileloc := "received/" + raptorq.SenderPubKey + "_" + strconv.FormatUint(uint64(raptorq.SuccessTime), 10)
+	fileloc := "received/" + strconv.Itoa(raptorq.senderID) + "_" + strconv.FormatUint(uint64(raptorq.successTime), 10)
 	ioutil.WriteFile(fileloc, buf, 0644)
 }

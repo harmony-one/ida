@@ -19,10 +19,10 @@ func (node *Node) BroadCast(msg []byte) {
 		if node.SelfPeer.PubKey == peer.PubKey {
 			continue
 		}
-		tcpaddr := net.JoinHostPort(peer.Ip, peer.TCPPort)
+		tcpaddr := net.JoinHostPort(peer.IP, peer.TCPPort)
 		conn, err := net.Dial("tcp", tcpaddr)
 		if err != nil {
-			log.Printf("cannot connect to peer %v:%v", peer.Ip, peer.TCPPort)
+			log.Printf("cannot connect to peer %v:%v", peer.IP, peer.TCPPort)
 			continue
 		}
 		wg.Add(1)

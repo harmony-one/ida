@@ -46,7 +46,7 @@ func (config *Config) GetPeerInfo() (ida.Peer, []ida.Peer, []ida.Peer) {
 		if err != nil {
 			log.Printf("cannot convert sid")
 		}
-		peer := ida.Peer{Ip: entry.IP, TCPPort: entry.TCPPort, UDPPort: entry.UDPPort, PubKey: entry.PubKey, Sid: sid}
+		peer := ida.Peer{IP: entry.IP, TCPPort: entry.TCPPort, UDPPort: entry.UDPPort, PubKey: entry.PubKey, Sid: sid}
 		if entry.Role == "0" {
 			selfPeer = peer
 		} else if entry.Role == "1" {

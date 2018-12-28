@@ -23,7 +23,7 @@ func InitNode(confignbr string, configallpeer string, t0 float64, t1 float64, t2
 	Cache := make(map[ida.HashKey]*ida.RaptorQImpl)
 	SenderCache := make(map[ida.HashKey]bool)
 	PeerDecodedCounter := make(map[ida.HashKey]map[int]int)
-	node := ida.Node{SelfPeer: selfPeer, PeerList: peerList, AllPeers: allPeers, Cache: Cache, PeerDecodedCounter: PeerDecodedCounter, SenderCache: SenderCache, T0: t0, T1: t1, Base: base, T2: t2, Hop: hop}
+	node := ida.Node{SelfPeer: selfPeer, PeerList: peerList, AllPeers: allPeers, Cache: Cache, PeerDecodedCounter: PeerDecodedCounter, SenderCache: SenderCache, InitialDelayTime: t0, MaxDelayTime: t1, ExpBase: base, RelayTime: t2, Hop: hop}
 	return &node
 }
 
