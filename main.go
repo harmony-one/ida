@@ -39,7 +39,7 @@ func InitUniCastNode(confignbr string, configallpeer string) *uni.Node {
 }
 
 func main() {
-	graphConfigFile := flag.String("graph_config", "graph_config.txt", "file containing network structure")
+	graphConfigFile := flag.String("graph_config", "graph0.txt", "file containing network structure")
 	generateConfigFiles := flag.Bool("gen_config", false, "whether to generate config files from graph_config file")
 	broadCast := flag.Bool("broadcast", false, "whether to broadcast a message")
 	msgFile := flag.String("msg_file", "test.txt", "message file to broadcast")

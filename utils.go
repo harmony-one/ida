@@ -14,7 +14,10 @@ import (
 	"time"
 )
 
-const PubKeySize int = 20
+const (
+	PubKeySize   int    = 20
+	ConfigFolder string = "configs/"
+)
 
 // Entry is a single config of a node.
 type Entry struct {
@@ -113,7 +116,7 @@ func GenerateConfigFromGraph(graphfile string) {
 }
 
 func InitConfig(n int) (map[int][]byte, []int, []int) {
-	filename := "configs/config_allpeers.txt"
+	filename := ConfigFolder + "config_allpeers.txt"
 	f, err := os.Create(filename)
 	if err != nil {
 		log.Printf("cannot create file: %v", filename)
@@ -147,7 +150,7 @@ func InitConfig(n int) (map[int][]byte, []int, []int) {
 }
 
 func WriteGraphRelationToConfig(p []string, n int, pubkeys map[int][]byte, tcps []int, udps []int) {
-	filename := "configs/config_" + p[0] + ".txt"
+	filename := ConfigFolder + "config_" + p[0] + ".txt"
 	f, err := os.Create(filename)
 	if err != nil {
 		log.Printf("cannot create file %v", filename)

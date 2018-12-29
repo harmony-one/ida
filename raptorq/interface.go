@@ -22,22 +22,31 @@ const (
 	Threshold float32 = 0.8 // threshold rate of number of neighors decode message successfully
 )
 
+type PID struct {
+	PeerID
+	ID uint16
+}
+
 type Peer struct {
 	IP      string
 	TCPPort string
 	UDPPort string
 	PubKey  string
-	Sid     int
+	ID      PID
+}
+
+type GID struct {
+	GroupID
+	ID uint8
 }
 
 type HashKey [HashSize]byte
 
 type Node struct {
-	GossipIDA
+	BroadCaster
 
 	SelfPeer           Peer
-	PeerList           []Peer
-	AllPeers           []Peer
+	groupID            GroupID // currently assume one node only belongs to one group
 	InitialDelayTime   float64 // sender delay parameter
 	MaxDelayTime       float64 // sender delay parameter
 	ExpBase            float64 // sender delay parameter
@@ -54,10 +63,10 @@ type RaptorQImpl struct {
 	Encoder map[int]libraptorq.Encoder
 	Decoder map[int]libraptorq.Decoder
 
-	senderID        int
+	senderID        PeerID
+	messageGroupID  GroupID
 	rootHash        []byte
 	numChunks       int
-	chunkSize       int
 	threshold       int
 	receivedSymbols map[int]map[uint32]bool
 	numDecoded      int
@@ -67,9 +76,31 @@ type RaptorQImpl struct {
 	stats           map[int]float64 // for benchmark purpose
 }
 
-// IDA broadcast using RaptorQ interface
-type GossipIDA interface {
-	BroadCast(msg []byte, pc net.PacketConn) (context.CancelFunc, *RaptorQImpl)
+type GroupID interface {
+	GetBytes() []byte
+	GetSize() int
+}
+
+type PeerID interface {
+	GetBytes() []byte
+	GetSize() int
+}
+
+type UDPNetwork struct {
+	Network
+	pc net.UDPConn
+}
+
+// IDA broadcast main interface
+type BroadCaster interface {
+	BroadCast(msg []byte, groupID GroupID, network Network) (context.CancelFunc, *RaptorQImpl)
 	StopBroadCast(cancel context.CancelFunc, raptorq *RaptorQImpl)
-	ListeningOnBroadCast(pc net.PacketConn)
+	Gossip(network Network)
+}
+
+type Network interface {
+	GetGroupSize(groupID int) int
+	GetPeerList(selfID PeerID, groupID GroupID) []PeerID
+	Receive() ([]byte, PeerID, error) // get sender's peerID
+	SendMessage(msg []byte, peerID PeerID) error
 }
